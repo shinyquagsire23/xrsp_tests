@@ -1,0 +1,6 @@
+- XrspSessionType:
+  0: None
+  1: basic
+  2: benchmark
+  3: streaming
+  4: xrsp_tester
