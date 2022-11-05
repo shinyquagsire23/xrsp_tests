@@ -1,24 +1,6 @@
 import sys
 import struct
 
-if len(sys.argv) < 2:
-    print ("capnp_parse.py file.bin")
-    sys.exit(-1)
-
-f = open(sys.argv[1], "rb")
-contents = f.read()
-f.close()
-
-def get_bytes(idx, len):
-    global contents
-    b = contents[idx*8:(idx*8)+len]
-    return b
-
-def get_word(idx):
-    global contents
-    b = contents[idx*8:(idx+1)*8]
-    return struct.unpack("<Q", b)[0]
-
 def hex_dump(b, prefix=""):
     p = prefix
     b = bytes(b)
@@ -29,86 +11,111 @@ def hex_dump(b, prefix=""):
         p += ("%02x " % b[i])
     print (p)
 
-def parse_entry(idx, prefix=""):
-    ret = 0
-    word = get_word(idx)
-    ret += 1
-    #print (prefix + ("0x%016x" % word) + " (" + hex(idx) +"/" + hex(idx*8) + ")")
 
-    a = (word & 3)
-    if word == 0:
-        print (prefix + "(nullptr)")
-        return 8
-    elif a == 0: # struct
-        dataOffs = (word >> 2) & 0x3FFFFFFF
-        dataWords = (word >> 32) & 0xFFFF
-        dataPtrs = (word >> 48) & 0xFFFF
+class CapnpParser:
 
-        print (prefix + "struct", "offs="+hex(dataOffs), "words="+hex(dataWords), "ptrs="+hex(dataPtrs))
+    def __init__(self, contents):
+        self.contents = contents
 
-        print (prefix + "  data:")
-        for i in range(0, dataWords):
-            print(prefix + "    " + "data " + hex(i) + ": " + hex(get_word(idx + 1 + dataOffs + i)))
+    def get_bytes(self, idx, len):
+        b = self.contents[idx*8:(idx*8)+len]
+        return b
 
-        print (prefix + "  ptrs:")
-        for i in range(0, dataPtrs):
-            parse_entry(idx + 1 + dataOffs + dataWords + i, prefix + "    ")
+    def get_word(self, idx):
+        b = self.contents[idx*8:(idx+1)*8]
+        return struct.unpack("<Q", b)[0]
 
-        ret += dataWords + dataPtrs
-    elif a == 1: # list
-        dataOffs = (word >> 2) & 0x3FFFFFFF
-        dataSizeEnc = (word >> 32) & 0x7
-        numElements = (word >> 35)
+    def parse_entry(self, idx, prefix=""):
+        ret = 0
+        word = self.get_word(idx)
+        ret += 1
+        #print (prefix + ("0x%016x" % word) + " (" + hex(idx) +"/" + hex(idx*8) + ")")
 
-        sizeLut = [0, 0, 1, 2, 4, 8, 8, 0]
+        a = (word & 3)
+        if word == 0:
+            print (prefix + "(nullptr)")
+            return 8
+        elif a == 0: # struct
+            dataOffs = (word >> 2) & 0x3FFFFFFF
+            dataWords = (word >> 32) & 0xFFFF
+            dataPtrs = (word >> 48) & 0xFFFF
 
-        dataSize = sizeLut[dataSizeEnc]
-        totalSize = dataSize * numElements
+            print (prefix + "struct", "offs="+hex(dataOffs), "words="+hex(dataWords), "ptrs="+hex(dataPtrs))
 
-        if dataSizeEnc == 1:
-            totalSize = numElements // 8
-            if totalSize <= 8:
-                totalSize = 1
+            print (prefix + "  data:")
+            for i in range(0, dataWords):
+                print(prefix + "    " + "data " + hex(i) + ": " + hex(self.get_word(idx + 1 + dataOffs + i)))
 
-        print (prefix + "list", hex(dataOffs), hex(dataSizeEnc), hex(numElements), hex(dataSize), hex(totalSize))
-        
-        if dataSizeEnc == 7:
-            tmp = idx + 1 + dataOffs
-            tag = get_word(tmp)
+            print (prefix + "  ptrs:")
+            for i in range(0, dataPtrs):
+                self.parse_entry(idx + 1 + dataOffs + dataWords + i, prefix + "    ")
 
-            numWords = numElements
-            numElements = (tag >> 2) & 0x3FFFFFFF
-            print (prefix + "  composite (" + hex(tag) + "), numElements " + hex(numElements) + ":")
+            ret += dataWords + dataPtrs
+        elif a == 1: # list
+            dataOffs = (word >> 2) & 0x3FFFFFFF
+            dataSizeEnc = (word >> 32) & 0x7
+            numElements = (word >> 35)
 
-            tmp += 1
-            for i in range(0, numElements):
-                parse_entry(tmp, prefix + "    ")
+            sizeLut = [0, 0, 1, 2, 4, 8, 8, 0]
+
+            dataSize = sizeLut[dataSizeEnc]
+            totalSize = dataSize * numElements
+
+            if dataSizeEnc == 1:
+                totalSize = numElements // 8
+                if totalSize <= 8:
+                    totalSize = 1
+
+            print (prefix + "list", hex(dataOffs), hex(dataSizeEnc), hex(numElements), hex(dataSize), hex(totalSize))
+            
+            if dataSizeEnc == 7:
+                tmp = idx + 1 + dataOffs
+                tag = self.get_word(tmp)
+
+                numWords = numElements
+                numElements = (tag >> 2) & 0x3FFFFFFF
+                print (prefix + "  composite (" + hex(tag) + "), numElements " + hex(numElements) + ":")
+
                 tmp += 1
-        else:
-            dataBytes = get_bytes(idx + 1 + dataOffs, totalSize)
-            print (prefix + "  contents:", dataBytes)
-            hex_dump(dataBytes, prefix + "  ")
-            print ("")
+                for i in range(0, numElements):
+                    self.parse_entry(tmp, prefix + "    ")
+                    tmp += 1
+            else:
+                dataBytes = self.get_bytes(idx + 1 + dataOffs, totalSize)
+                print (prefix + "  contents:", dataBytes)
+                hex_dump(dataBytes, prefix + "  ")
+                print ("")
 
-        ret += (totalSize // 8)
+            ret += (totalSize // 8)
 
-    elif a == 2: # inter-segment ptr
-        print (prefix + "inter-seg")
-    elif a == 3: # capabilities
-        print (prefix + "capability")
-    return ret
+        elif a == 2: # inter-segment ptr
+            print (prefix + "inter-seg")
+        elif a == 3: # capabilities
+            print (prefix + "capability")
+        return ret
 
-entries = []
-for i in range(0, len(contents) // 8):
-    word = get_word(i)
-    if word == 0x0006000500000000:
-        entries += [i]
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print ("capnp_parse.py file.bin")
+        sys.exit(-1)
 
-if len(entries) == 0:
-    entries = [0]
+    f = open(sys.argv[1], "rb")
+    contents = f.read()
+    f.close()
 
-for e in entries:
-    parse_entry(e)
+    parser = CapnpParser(contents)
+
+    entries = []
+    for i in range(0, len(contents) // 8):
+        word = parser.get_word(i)
+        if word == 0x0006000500000000:
+            entries += [i]
+
+    if len(entries) == 0:
+        entries = [0]
+
+    for e in entries:
+        parser.parse_entry(e)
 
 '''
 wordIdx = 0

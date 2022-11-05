@@ -4,3 +4,83 @@
   2: benchmark
   3: streaming
   4: xrsp_tester
+
+-XrspTransportType
+  0: none
+  1: file
+  2: winusb
+  3: libusb
+  4: tcpclient
+  5: tcpserver
+  6: udpclient
+  7: udpserver
+  8: tlsclient
+  9: tlsserver
+  10: replay
+
+-XrspParticipantTransmissionType
+  0: none
+  1: QUIC
+  2: TCP
+  3: UDP
+  4: USB2
+  5: USB3
+  6: file
+  7: Replay
+  8: CommLib
+
+-XrspResult
+  0x0: "success"
+  0x1: "invalid argument"
+  0x2: "invalid data"
+  0x3: "invalid state"
+  0x4: "buffer too small"
+  0x5: "out of memory"
+  0x6: "topic does not exist"
+  0x7: "topic already exists"
+  0x8: "topic is not writable"
+  0x9: "topic is not readable"
+  0xa: "no device"
+  0xb: "invalid transport description"
+  0xc: "transport closed"
+  0xd: "I/O error"
+  0xe: "timeout occurred"
+  0xf: "packet lost"
+  0x10: "incompatible packet version"
+  0x11: "forced termination"
+  0x12: "property does not exist"
+  0x13: "no session active"
+  0x14: "not implemented"
+  0x15: "unknown error"
+  0x16: "network host disconnected"
+  0x17: "ssl memory allocation failed"
+  0x18: "ssl set cipher list failed"
+  0x19: "ssl failed to use the provided cert"
+  0x1A: "ssl failed to use the privided private "...
+  0x1B: "cert and key provided failed validation"
+  0x1C: "ssl failed to set read/write fds"
+  0x1D: "ssl handshake failed"
+  0x1E: "peer failed to provide cert"
+  0x1F: "invalid pairing code"
+  0x20: "pairing refused"
+  0x21: "pairing timed out"
+  0x22: "pairing_invalid_cert"
+
+-XrspBuiltinMessageType
+  0x0: PAIRING_ACK
+  0x1: INVITE
+  0x2: OK
+  0x3: ACK
+  0x4: ERROR
+  0x5: BYE
+  0x6: ECHO
+  0x7: PAIRING
+  0x8: unknown
+  0x9: CODE_GENERATION
+  0xA: CODE_GENERATION_ACK
+  0xB: unknown
+  0xC: unknown
+  0xD: unknown
+  0xE: unknown
+  0xF: RESERVED
+  
