@@ -21,13 +21,17 @@ See also: https://github.com/OpenOculus/XrspDocs
 | 8-13  | 6    | Topic                        |
 | 14-15 | 2    | Unk                          |
 
-# Cap'n Stream header
+# XrspBuiltinHeader
+
+Header for hostinfo-adv
+
 | Position | Size | Name                          |
 |----------|------|-------------------------------|
 | 0x00     | u32  | Header_0                      |
 | 0x04     | u32  | Data stream version           |
 | 0x08     | u32  | Unk                           |
 | 0x0C     | u32  | Payload length (in u64 words) |
+| 0x10     | ...  | Payload                       |
 
 # Header_0
 |  Bits | Size | Name                                    |
@@ -37,7 +41,7 @@ See also: https://github.com/OpenOculus/XrspDocs
 | 14-29 | 16   | Stream size in words, including header  |
 | 30-31 | 2    | Unk                                     |
 
-# Payload
+# HostInfo Packet
 The initial hostinfo sent is a capnp message containing the device's info, including the serial, name/device type, lens intrinsics, etc.
 
 # Topics
