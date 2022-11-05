@@ -177,6 +177,7 @@ class TopicPkt:
         self.bPacketVersionNumber = (topic_raw & 0x20) == 0x20
         self.topic_idx = (topic_raw >> 8) & 0x3F
         self.unk_14_15 = (topic_raw >> 14) & 0x3
+        self.num_words = num_words
 
         self.payload = b[8:]
 
@@ -185,6 +186,15 @@ class TopicPkt:
             self.specificObj = HostInfoPkt(self.payload)
         elif self.topic_idx == 0x21:
             self.specificObj = LoggingPkt(self.payload)
+
+    def missing_bytes(self):
+        amt = ((self.num_words - 1) * 4) - len(self.payload)
+        if amt >= 0:
+            return amt
+        return 0
+
+    def add_missing_bytes(self, b):
+        self.payload += b
 
     def dump(self):
         print ("TopicPkt:")
