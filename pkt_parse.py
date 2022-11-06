@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
         pkt = TopicPkt(buildup)
         while pkt.missing_bytes() > 0:
-            print ("MISSING", hex(pkt.missing_bytes()))
+            #print ("MISSING", hex(pkt.missing_bytes()))
             _b = remainder[:0x200]
             remainder = remainder[0x200:]
             pkt.add_missing_bytes(_b)

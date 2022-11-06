@@ -88,8 +88,26 @@ def send_to_topic(topic, msg):
     except usb.core.USBTimeoutError as e:
         print ("Failed to send to topic", hex(topic), e)
 
+remainder_bytes = b''
 def read_xrsp():
-    b = b''
+    global remainder_bytes
+    
+    # Parse anything that's whole in the remainder bytes
+    try:
+        while True:
+            if len(remainder_bytes) <= 0:
+                break
+            pkt = TopicPkt(remainder_bytes)
+            if pkt.missing_bytes() <= 0:
+                pkt.dump()
+                remainder_bytes = pkt.remainder_bytes()
+            else:
+                break
+    except Exception as e:
+        print (e)
+
+    b = remainder_bytes
+
     try:
         b += bytes(ep_in.read(0x200))
         b += bytes(ep_in.read(0x200))
@@ -107,8 +125,13 @@ def read_xrsp():
         print ("Failed read", e)
 
     if len(b) >= 8:
-        pkt = TopicPkt(b)
-        pkt.dump()
+        try:
+            pkt = TopicPkt(b)
+            remainder_bytes = pkt.remainder_bytes()
+            b = b[:len(remainder_bytes)]
+            pkt.dump()
+        except Exception as e:
+            print (e)
         f = open("dump_pkts.bin", "ab")
         f.write(b)
         f.close()

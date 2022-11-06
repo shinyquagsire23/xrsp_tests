@@ -199,6 +199,8 @@ class TopicPkt:
             self.specificObj = HostInfoPkt(self.payload)
         elif self.topic_idx == TOPIC_POSE:
             self.specificObj = PosePkt(self.payload)
+        elif self.topic_idx == TOPIC_AUDIO:
+            self.specificObj = AudioPkt(self.payload)
         elif self.topic_idx == TOPIC_CAMERA_STREAM:
             self.specificObj = CameraStreamPkt(self.payload, self.sequence)
         elif self.topic_idx == TOPIC_LOGGING:
@@ -335,7 +337,28 @@ class PosePkt:
 
         try:
             parser = CapnpParser(self.payload)
-            parser.parse_entry(0)
+            #parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+
+class AudioPkt:
+
+    def __init__(self, b):
+        if len(b) < 8:
+            print ("Bad pkt!")
+            return
+
+        self.payload = b[0x0:]
+
+    def dump(self):
+        print ("AudioPkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
+
+        try:
+            parser = CapnpParser(self.payload)
+            #parser.parse_entry(0)
         except Exception as e:
             print (e)
 
@@ -358,8 +381,11 @@ class CameraStreamPkt:
         with open("camera_seq_" + str(self.seq) + ".bin", "wb") as f:
             f.write(self.payload)
 
+        if len(self.payload) > 0x200:
+            return
+
         try:
             parser = CapnpParser(self.payload)
-            #parser.parse_entry(0)
+            parser.parse_entry(0)
         except Exception as e:
             print (e)
