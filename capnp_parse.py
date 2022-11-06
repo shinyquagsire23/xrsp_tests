@@ -1,16 +1,7 @@
 import sys
 import struct
 
-def hex_dump(b, prefix=""):
-    p = prefix
-    b = bytes(b)
-    for i in range(0, len(b)):
-        if i != 0 and i % 16 == 0:
-            print (p)
-            p = prefix
-        p += ("%02x " % b[i])
-    print (p)
-
+from utils import hex_dump
 
 class CapnpParser:
 
@@ -66,20 +57,34 @@ class CapnpParser:
                 if totalSize <= 8:
                     totalSize = 1
 
-            print (prefix + "list", hex(dataOffs), hex(dataSizeEnc), hex(numElements), hex(dataSize), hex(totalSize))
+            print (prefix + "list dataOffs=" + hex(dataOffs) + ", dataSizeEnc=" + hex(dataSizeEnc) + ", numElements=" + hex(numElements) + ", dataSize=" + hex(dataSize) + ", totalSize=" + hex(totalSize))
             
             if dataSizeEnc == 7:
                 tmp = idx + 1 + dataOffs
                 tag = self.get_word(tmp)
+                tmp += 1
+                ret += 1
 
                 numWords = numElements
                 numElements = (tag >> 2) & 0x3FFFFFFF
-                print (prefix + "  composite (" + hex(tag) + "), numElements " + hex(numElements) + ":")
+                dataWords = (tag >> 32) & 0xFFFF
+                dataPtrs = (tag >> 48) & 0xFFFF
+                print (prefix + "  composite (" + hex(tag) + "), numElements=" + hex(numElements) + ", words=" + hex(dataWords) + ", ptrs=" + hex(dataPtrs) + ":")
 
-                tmp += 1
                 for i in range(0, numElements):
-                    self.parse_entry(tmp, prefix + "    ")
-                    tmp += 1
+                    print (prefix + "  entry " + hex(i) + ":")
+                    print (prefix + "    data:")
+                    for i in range(0, dataWords):
+                        print(prefix + "      " + "data " + hex(i) + ": " + hex(self.get_word(tmp)))
+                        tmp += 1
+                        ret += 1
+
+                    print (prefix + "    ptrs:")
+                    for i in range(0, dataPtrs):
+                        self.parse_entry(tmp, prefix + "      ")
+                        tmp += 1
+                        ret += 1
+
             else:
                 dataBytes = self.get_bytes(idx + 1 + dataOffs, totalSize)
                 print (prefix + "  contents:", dataBytes)

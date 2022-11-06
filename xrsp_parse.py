@@ -1,16 +1,15 @@
+# pip3 install pycapnp
 import struct
 
-from capnp_parse import CapnpParser
+import capnp
+import Logging_capnp
 
-def hex_dump(b, prefix=""):
-    p = prefix
-    b = bytes(b)
-    for i in range(0, len(b)):
-        if i != 0 and i % 16 == 0:
-            print (p)
-            p = prefix
-        p += ("%02x " % b[i])
-    print (p)
+from capnp_parse import CapnpParser
+from utils import hex_dump
+
+# pycapnp expects some length header.
+def append_size(b):
+    return struct.pack("<LL", 0, len(b) // 8) + b
 
 BUILTIN_PAIRING_ACK = 0x0
 BUILTIN_INVITE = 0x1
@@ -171,6 +170,8 @@ class TopicPkt:
 
         topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
 
+        self.topic_raw = topic_raw
+        self.sequence = sequence
         self.unk_0_2 = (topic_raw) & 0x7
         self.bHasAlignPadding = (topic_raw & 8) == 8
         self.bPacketVersionIsInternal = (topic_raw & 0x10) == 0x10
@@ -178,25 +179,64 @@ class TopicPkt:
         self.topic_idx = (topic_raw >> 8) & 0x3F
         self.unk_14_15 = (topic_raw >> 14) & 0x3
         self.num_words = num_words
+        self.real_size = ((self.num_words - 1) * 4)
+
+        self.do_handoff = False
 
         self.payload = b[8:]
+        self.payload = self.payload[:self.real_size]
+
+        self.payload_remainder = b[8+len(self.payload):]
 
         self.specificObj = None
-        if self.topic_idx == 1:
+        if self.missing_bytes() == 0:
+            self.rebuild_specific()
+
+    def rebuild_specific(self):
+        self.specificObj = None
+
+        if self.topic_idx == TOPIC_HOSTINFO_ADV:
             self.specificObj = HostInfoPkt(self.payload)
-        elif self.topic_idx == 0x21:
+        elif self.topic_idx == TOPIC_POSE:
+            self.specificObj = PosePkt(self.payload)
+        elif self.topic_idx == TOPIC_CAMERA_STREAM:
+            self.specificObj = CameraStreamPkt(self.payload, self.sequence)
+        elif self.topic_idx == TOPIC_LOGGING:
             self.specificObj = LoggingPkt(self.payload)
 
     def missing_bytes(self):
         amt = ((self.num_words - 1) * 4) - len(self.payload)
+        if self.num_words == 0xFFFF and amt == 0:
+            self.do_handoff = True
+            return 0x200
         if amt >= 0:
             return amt
         return 0
 
     def add_missing_bytes(self, b):
+        if self.do_handoff:
+            topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
+            self.num_words += num_words - 1
+            self.real_size = ((self.num_words - 1) * 4)
+            b = b[8:]
+            self.do_handoff = False
+
         self.payload += b
+        before = len(self.payload)
+        self.payload = self.payload[:self.real_size]
+        after = len(self.payload)
+        self.payload_remainder = b[len(b) - (before-after):]
+
+    def remainder_bytes(self):
+        return self.payload_remainder
 
     def dump(self):
+        # Don't print aui4a-adv padding for now
+        if self.topic_idx == 0:
+            return
+
+        self.rebuild_specific()
+
         print ("TopicPkt:")
         print ("  unk_0_2: %01x" % self.unk_0_2)
         print ("  bHasAlignPadding: " + str(self.bHasAlignPadding))
@@ -204,6 +244,8 @@ class TopicPkt:
         print ("  bPacketVersionNumber: " + str(self.bPacketVersionNumber))
         print ("  topic: %s (%01x)" % (XrspTopic[self.topic_idx], self.topic_idx))
         print ("  unk_14_15: %01x" % self.unk_14_15)
+        print ("  num_words: %04x" % self.num_words)
+        print ("  sequence: %04x" % self.sequence)
 
         if self.specificObj is not None:
             self.specificObj.dump()
@@ -256,24 +298,68 @@ class HostInfoPkt:
 class LoggingPkt:
 
     def __init__(self, b):
-        if len(b) < 16:
+        if len(b) < 8:
             print ("Bad pkt!")
             return
 
-        header_0, unk_4, = struct.unpack("<LL", b[:0x8])
-
-        self.header_0 = header_0
-        self.unk_4 = unk_4
         self.payload = b[0x0:]
 
     def dump(self):
-        print ("LoggingPkt:")
-        print ("  header_0: %08x" % self.header_0)
-        print ("  unk_4:    %08x" % self.unk_4)
+        print ("LoggingPkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
+
+        try:
+            with Logging_capnp.PayloadLogging.from_bytes(append_size(self.payload)) as logs:
+                print (logs)
+
+            
+        except Exception as e:
+            print (e)
+
+class PosePkt:
+
+    def __init__(self, b):
+        if len(b) < 8:
+            print ("Bad pkt!")
+            return
+
+        self.payload = b[0x0:]
+
+    def dump(self):
+        print ("PosePkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
 
         try:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
-            parser.parse_entry(14)
         except Exception as e:
-            a='a'
+            print (e)
+
+class CameraStreamPkt:
+
+    def __init__(self, b, seq):
+        if len(b) < 8:
+            print ("Bad pkt!")
+            return
+
+        self.seq = seq
+        self.payload = b[0x0:]
+
+    def dump(self):
+        print ("CameraStreamPkt:", hex(len(self.payload)), hex(self.seq))
+        if len(self.payload) <= 0x8:
+            #hex_dump(self.payload)
+            return
+
+        with open("camera_seq_" + str(self.seq) + ".bin", "wb") as f:
+            f.write(self.payload)
+
+        try:
+            parser = CapnpParser(self.payload)
+            #parser.parse_entry(0)
+        except Exception as e:
+            print (e)

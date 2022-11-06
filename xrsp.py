@@ -6,6 +6,7 @@ import time
 
 from capnp_parse import CapnpParser
 from xrsp_parse import *
+from utils import hex_dump
 
 # find our device
 dev = usb.core.find(idVendor=0x2833) #, idProduct=0x0183
@@ -64,15 +65,6 @@ reply = bytes(b'')
 
 increment = 0
 
-def hex_dump(b):
-    p = ""
-    b = bytes(b)
-    for i in range(0, len(b)):
-        if i != 0 and i % 16 == 0:
-            p += "\n"
-        p += ("%02x " % b[i])
-    print (p)
-
 def send_to_topic(topic, msg):
     global increment
     try:
@@ -117,6 +109,10 @@ def read_xrsp():
     if len(b) >= 8:
         pkt = TopicPkt(b)
         pkt.dump()
+        f = open("dump_pkts.bin", "ab")
+        f.write(b)
+        f.close()
+
     return b
 
 try:
