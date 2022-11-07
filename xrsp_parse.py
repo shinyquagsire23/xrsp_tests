@@ -1,9 +1,15 @@
-# pip3 install pycapnp
+# pip3 install pycapnp pygame numpy
 import struct
+
+# Draw cameras
+import pygame
+import numpy as np
 
 import capnp
 import Logging_capnp
 import CameraStream_capnp
+import Pose_capnp
+import Audio_capnp
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -60,6 +66,11 @@ TOPIC_CAMERA_STREAM = 0x20
 TOPIC_LOGGING = 0x21
 TOPIC_22 = 0x22
 TOPIC_23 = 0x23
+
+STATE_SEGMENT_META = 0
+STATE_SEGMENT_READ = 1
+
+POSEDATA_0 = 0x0
 
 XrspResultLut = [
     "success",
@@ -162,14 +173,76 @@ def XrspBuiltinMessageType(idx):
     else:
         return "unknown"
 
+class CameraStreamState:
+
+    def __init__(self):
+        self.has_meta = False
+        self.seq_collecting = False
+        self.which = 0
+        self.seq_seg0_size = 0
+        self.seq_seg1_size = 0
+        self.seq_seg2_size = 0
+
+        self.seq_seg0 = b''
+        self.seq_seg1 = b''
+        self.seq_seg2 = b''
+
+        self.pixels = np.zeros((1024,1280))
+
+
+class GenericState:
+
+    def __init__(self):
+        self.state = STATE_SEGMENT_META
+
+        self.type_idx = 0
+        self.seg0_size = 0
+        self.seg0 = b''
+
+    def reset(self):
+        self.type_idx = 0
+        self.seg0_size = 0
+        self.seg0 = b''
+
+class XrspHost:
+
+    def __init__(self):
+        self.topics_mute = [TOPIC_AUI4A_ADV, TOPIC_POSE, TOPIC_AUDIO]
+
+        self.camera_state = CameraStreamState()
+        self.pose_state = GenericState()
+        self.audio_state = GenericState()
+        self.logging_state = GenericState()
+
+        self.window = pygame.display.set_mode((1280, 1024))
+        pygame.display.set_caption('Camera')
+        self.update()
+
+    def update(self):
+        background_color = (234, 212, 252)
+        self.window.fill(background_color)
+
+        pixel_array = pygame.PixelArray(self.window)
+
+        for x in range(0, 1280):
+            for y in range(0, 1024):
+                val = self.camera_state.pixels[y,x]
+                pixel_array[x,y] = (val,val,val)
+
+        pixel_array.close()
+        pygame.display.flip()
+
 class TopicPkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 7:
-            print ("Bad pkt!")
+            print ("Bad topic pkt!")
+            hex_dump(b)
             return
 
         topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
+
+        self.host = host
 
         self.topic_raw = topic_raw
         self.sequence = sequence
@@ -190,24 +263,22 @@ class TopicPkt:
         self.payload_remainder = b[8+len(self.payload):]
 
         self.specificObj = None
-        if self.missing_bytes() == 0:
-            self.rebuild_specific()
 
     def rebuild_specific(self):
         self.specificObj = None
 
         if self.topic_idx == TOPIC_HOSTINFO_ADV:
-            self.specificObj = HostInfoPkt(self.payload)
+            self.specificObj = HostInfoPkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_POSE:
-            self.specificObj = PosePkt(self.payload)
+            self.specificObj = PosePkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_AUDIO:
-            self.specificObj = AudioPkt(self.payload)
+            self.specificObj = AudioPkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_CAMERA_STREAM:
-            self.specificObj = CameraStreamPkt(self.payload, self.sequence)
+            self.specificObj = CameraStreamPkt(self.host, self.payload, self.sequence)
         elif self.topic_idx >= TOPIC_SLICE_0 and self.topic_idx <= TOPIC_SLICE_15:
-            self.specificObj = SlicePkt(self.payload)
+            self.specificObj = SlicePkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_LOGGING:
-            self.specificObj = LoggingPkt(self.payload)
+            self.specificObj = LoggingPkt(self.host, self.payload)
 
     def missing_bytes(self):
         amt = ((self.num_words - 1) * 4) - len(self.payload)
@@ -233,14 +304,21 @@ class TopicPkt:
         self.payload_remainder = b[len(b) - (before-after):]
 
     def remainder_bytes(self):
+        #if self.missing_bytes() != 0:
+        #    return self.payload + self.payload_remainder
+
         return self.payload_remainder
 
     def dump(self):
         # Don't print aui4a-adv padding for now
-        if self.topic_idx == 0:
+        if self.topic_idx in self.host.topics_mute:
             return
 
-        self.rebuild_specific()
+        if self.missing_bytes() == 0:
+            self.rebuild_specific()
+        else:
+            print ("Missing %x bytes..." % self.missing_bytes())
+            return
 
         print ("TopicPkt:")
         print ("  unk_0_2: %01x" % self.unk_0_2)
@@ -255,6 +333,7 @@ class TopicPkt:
         if self.specificObj is not None:
             self.specificObj.dump()
         else:
+            print ("Missing %x bytes..." % self.missing_bytes())
             hex_dump(self.payload)
         print ("---------")
         print ("")
@@ -262,9 +341,10 @@ class TopicPkt:
 
 class HostInfoPkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 16:
-            print ("Bad pkt!")
+            print ("Bad hostinfo pkt!")
+            hex_dump(b)
             return
 
         header_0, unk_4, unk_8, len_u64s = struct.unpack("<LLLL", b[:0x10])
@@ -302,12 +382,39 @@ class HostInfoPkt:
 
 class LoggingPkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 8:
-            print ("Bad pkt!")
+            print ("Bad log pkt!")
+            hex_dump(b)
             return
 
+        self.host = host
         self.payload = b[0x0:]
+
+        self.printable = ""
+
+        if self.host.logging_state.state == STATE_SEGMENT_META:
+            self.host.logging_state.reset()
+            self.host.logging_state.type_idx, self.host.logging_state.seg0_size = struct.unpack("<LL", self.payload[:8])
+
+            self.host.logging_state.seg0_size *= 8
+
+            self.host.logging_state.state = STATE_SEGMENT_READ
+        elif self.host.logging_state.state == STATE_SEGMENT_READ:
+
+            if len(self.host.logging_state.seg0) < self.host.logging_state.seg0_size:
+                self.host.logging_state.seg0 += self.payload
+            
+            seg0_left = self.host.logging_state.seg0_size - len(self.host.logging_state.seg0)
+            
+            if seg0_left <= 0:
+                try:
+                    # TODO: store this
+                    self.printable = Logging_capnp.PayloadLogging.from_segments([self.host.logging_state.seg0])
+                except Exception as e:
+                    print (e)
+                self.host.logging_state.state = STATE_SEGMENT_META
+
 
     def dump(self):
         print ("LoggingPkt:", hex(len(self.payload)))
@@ -315,22 +422,54 @@ class LoggingPkt:
             hex_dump(self.payload)
             return
 
+        '''
         try:
-            with Logging_capnp.PayloadLogging.from_bytes(append_size(self.payload)) as logs:
-                print (logs)
+            parser = CapnpParser(self.payload)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+        '''
 
-            
+        try:
+            print (self.printable)
         except Exception as e:
             print (e)
 
 class PosePkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 8:
-            print ("Bad pkt!")
+            print ("Bad pose pkt!")
+            hex_dump(b)
             return
 
+        self.host = host
         self.payload = b[0x0:]
+
+        self.printable = ""
+
+        if self.host.pose_state.state == STATE_SEGMENT_META:
+            self.host.pose_state.reset()
+            self.host.pose_state.type_idx, self.host.pose_state.seg0_size = struct.unpack("<LL", self.payload[:8])
+
+            self.host.pose_state.seg0_size *= 8
+
+            self.host.pose_state.state = STATE_SEGMENT_READ
+        elif self.host.pose_state.state == STATE_SEGMENT_READ:
+
+            if len(self.host.pose_state.seg0) < self.host.pose_state.seg0_size:
+                self.host.pose_state.seg0 += self.payload
+            
+            seg0_left = self.host.pose_state.seg0_size - len(self.host.pose_state.seg0)
+            
+            if seg0_left <= 0:
+                try:
+                    # TODO: store this
+                    self.printable = Pose_capnp.PayloadPose.from_segments([self.host.pose_state.seg0])
+                except Exception as e:
+                    print (e)
+                self.host.pose_state.state = STATE_SEGMENT_META
+
 
     def dump(self):
         print ("PosePkt:", hex(len(self.payload)))
@@ -338,20 +477,55 @@ class PosePkt:
             hex_dump(self.payload)
             return
 
+        '''
         try:
             parser = CapnpParser(self.payload)
-            #parser.parse_entry(0)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+        '''
+
+        try:
+            #print (self.printable)
+            pass
         except Exception as e:
             print (e)
 
 class AudioPkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 8:
-            print ("Bad pkt!")
+            print ("Bad audio pkt!")
             return
 
+        self.host = host
         self.payload = b[0x0:]
+
+        self.printable = ""
+
+        if self.host.audio_state.state == STATE_SEGMENT_META:
+            self.host.audio_state.reset()
+            self.host.audio_state.type_idx, self.host.audio_state.seg0_size = struct.unpack("<LL", self.payload[:8])
+
+            self.host.audio_state.seg0_size *= 8
+
+            self.host.audio_state.state = STATE_SEGMENT_READ
+        elif self.host.audio_state.state == STATE_SEGMENT_READ:
+
+            if len(self.host.audio_state.seg0) < self.host.audio_state.seg0_size:
+                self.host.audio_state.seg0 += self.payload
+            
+            seg0_left = self.host.audio_state.seg0_size - len(self.host.audio_state.seg0)
+            
+            if seg0_left <= 0:
+                try:
+                    # TODO: store this
+                    self.printable = Audio_capnp.PayloadAudio.from_segments([self.host.audio_state.seg0])
+                    #self.printable = "asdf"
+                except Exception as e:
+                    print (e)
+                self.host.audio_state.state = STATE_SEGMENT_META
+
 
     def dump(self):
         print ("AudioPkt:", hex(len(self.payload)))
@@ -359,23 +533,33 @@ class AudioPkt:
             hex_dump(self.payload)
             return
 
+        '''
         try:
             parser = CapnpParser(self.payload)
-            #parser.parse_entry(0)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+        '''
+
+        try:
+            #print (self.printable)
+            pass
         except Exception as e:
             print (e)
 
 class SlicePkt:
 
-    def __init__(self, b):
+    def __init__(self, host, b):
         if len(b) < 8:
-            print ("Bad pkt!")
+            print ("Bad slice pkt!")
+            hex_dump(b)
             return
 
-        self.payload = b[0xA:]
+        self.host = host
+        self.payload = b[0:]
 
     def dump(self):
-        print ("PosePkt:", hex(len(self.payload)))
+        print ("SlicePkt:", hex(len(self.payload)))
         if len(self.payload) <= 0x8:
             hex_dump(self.payload)
             return
@@ -386,91 +570,84 @@ class SlicePkt:
         except Exception as e:
             print (e)
 
-camera_has_meta = False
-camera_seq_collecting = False
-camera_which = 0
-camera_seq_seg0_size = 0
-camera_seq_seg1_size = 0
-camera_seq_seg2_size = 0
-
-camera_seq_seg0 = b''
-camera_seq_seg1 = b''
-camera_seq_seg2 = b''
-
 class CameraStreamPkt:
 
-    def __init__(self, b, seq):
+    def __init__(self, host, b, seq):
         if len(b) < 8:
-            print ("Bad pkt!")
+            print ("Bad camstream pkt!")
+            hex_dump(b)
             return
 
+        self.host = host
         self.seq = seq
         self.payload = b[0x0:]
 
-    def dump(self):
-        global camera_seq_collecting, camera_which, camera_seq_seg0_size, camera_seq_seg1_size, camera_seq_seg2_size
-        global camera_seq_seg0, camera_seq_seg1, camera_seq_seg2, camera_has_meta
-
-        print ("CameraStreamPkt:", hex(len(self.payload)), hex(self.seq))
-        if len(self.payload) == 0x10 and not camera_seq_collecting:
-            camera_seq_collecting = True
-            camera_which, camera_seq_seg0_size, camera_seq_seg1_size, camera_seq_seg2_size = struct.unpack("<LLLL", self.payload)
+        # TODO: Check seq and don't double-process data
+        if len(self.payload) == 0x10 and not self.host.camera_state.seq_collecting:
+            self.host.camera_state.seq_collecting = True
+            self.host.camera_state.which, self.host.camera_state.seq_seg0_size, self.host.camera_state.seq_seg1_size, self.host.camera_state.seq_seg2_size = struct.unpack("<LLLL", self.payload)
             
-            print("Decoding camera which: " + hex(camera_which) + " (" + hex(camera_seq_seg0_size) + ", " + hex(camera_seq_seg1_size) + ", " + hex(camera_seq_seg2_size) + ")")
+            print("Decoding camera which: " + hex(self.host.camera_state.which) + " (" + hex(self.host.camera_state.seq_seg0_size) + ", " + hex(self.host.camera_state.seq_seg1_size) + ", " + hex(self.host.camera_state.seq_seg2_size) + ")")
 
-            camera_seq_seg0_size *= 8
-            camera_seq_seg1_size *= 8
-            camera_seq_seg2_size *= 8
+            self.host.camera_state.seq_seg0_size *= 8
+            self.host.camera_state.seq_seg1_size *= 8
+            self.host.camera_state.seq_seg2_size *= 8
 
-            camera_seq_seg0 = b''
-            camera_seq_seg1 = b''
-            camera_seq_seg2 = b''
+            self.host.camera_state.seq_seg0 = b''
+            self.host.camera_state.seq_seg1 = b''
+            self.host.camera_state.seq_seg2 = b''
             return
 
-        if camera_seq_collecting and len(camera_seq_seg0) < camera_seq_seg0_size:
-            camera_seq_seg0 += self.payload
-            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
-        elif camera_seq_collecting and len(camera_seq_seg1) < camera_seq_seg1_size:
-            camera_seq_seg1 += self.payload
-            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
-        elif camera_seq_collecting and len(camera_seq_seg2) < camera_seq_seg2_size:
-            camera_seq_seg2 += self.payload
-            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
+        if self.host.camera_state.seq_collecting and len(self.host.camera_state.seq_seg0) < self.host.camera_state.seq_seg0_size:
+            self.host.camera_state.seq_seg0 += self.payload
+        elif self.host.camera_state.seq_collecting and len(self.host.camera_state.seq_seg1) < self.host.camera_state.seq_seg1_size:
+            self.host.camera_state.seq_seg1 += self.payload
+        elif self.host.camera_state.seq_collecting and len(self.host.camera_state.seq_seg2) < self.host.camera_state.seq_seg2_size:
+            self.host.camera_state.seq_seg2 += self.payload
         
-        seg0_left = camera_seq_seg0_size - len(camera_seq_seg0)
-        seg1_left = camera_seq_seg1_size - len(camera_seq_seg1)
-        seg2_left = camera_seq_seg2_size - len(camera_seq_seg2)
+        seg0_left = self.host.camera_state.seq_seg0_size - len(self.host.camera_state.seq_seg0)
+        seg1_left = self.host.camera_state.seq_seg1_size - len(self.host.camera_state.seq_seg1)
+        seg2_left = self.host.camera_state.seq_seg2_size - len(self.host.camera_state.seq_seg2)
 
-        if camera_seq_collecting and seg0_left <= 0 and seg1_left <= 0 and seg2_left <= 0:
-            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
-
-            segs = [camera_seq_seg0, camera_seq_seg1, camera_seq_seg2]
-            #hex_dump(camera_seq_seg0)
-            if camera_which == 1 and camera_seq_seg0_size == 5*8:
+        if self.host.camera_state.seq_collecting and seg0_left <= 0 and seg1_left <= 0 and seg2_left <= 0:
+            
+            segs = [self.host.camera_state.seq_seg0, self.host.camera_state.seq_seg1, self.host.camera_state.seq_seg2]
+            #hex_dump(self.host.camera_state.seq_seg0)
+            if self.host.camera_state.which == 1 and self.host.camera_state.seq_seg0_size == 5*8:
                 payload = CameraStream_capnp.PayloadCameraStreamMeta.from_segments(segs)
                 jsondat = bytes(payload.metadata.data).decode("utf-8")
-                with open("camera.json", "w") as f:
+                with open("camera_metadata.json", "w") as f:
                     f.write(jsondat)
                     f.close()
-                camera_has_meta = True
-            elif camera_which == 1 and camera_has_meta or camera_which == 2:
+                self.host.camera_state.has_meta = True
+            elif self.host.camera_state.which == 1 and self.host.camera_state.has_meta or self.host.camera_state.which == 2:
                 payload = CameraStream_capnp.PayloadCameraStream.from_segments(segs)
 
                 idx = 0
                 for d in payload.unk1.struct1Unk4:
+
+                    # TODO: store this
                     dat = bytes(d.data)
-                    print (hex(len(dat)))
+                    if len(dat) == 0x140000 and idx == 0:
+                        self.host.camera_state.pixels = np.frombuffer(dat, dtype=np.uint8).reshape(1024,1280)
+                        self.host.update()
+
                     with open("camera_seq_" + str(self.seq) + "_" + str(idx) + ".bin", "wb") as f:
                         f.write(dat)
                         f.close()
                     idx += 1
 
-            camera_seq_collecting = False
-            camera_seq_seg0 = b''
-            camera_seq_seg1 = b''
-            camera_seq_seg2 = b''
+            self.host.camera_state.seq_collecting = False
+            self.host.camera_state.seq_seg0 = b''
+            self.host.camera_state.seq_seg1 = b''
+            self.host.camera_state.seq_seg2 = b''
 
             return
+
+    def dump(self):
+
+        print ("CameraStreamPkt:", hex(len(self.payload)), hex(self.seq))
+        print (hex(len(self.host.camera_state.seq_seg0)), hex(len(self.host.camera_state.seq_seg1)), hex(len(self.host.camera_state.seq_seg2)))
 
         if len(self.payload) <= 0x8:
             #hex_dump(self.payload)
@@ -485,10 +662,10 @@ class CameraStreamPkt:
         #test = CameraStream_capnp.PayloadCameraStream.new_message()
 
 
-        '''
+        
         try:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
         except Exception as e:
             print (e)
-        '''
+        

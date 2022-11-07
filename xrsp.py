@@ -8,6 +8,9 @@ from capnp_parse import CapnpParser
 from xrsp_parse import *
 from utils import hex_dump
 
+# XRSP host context
+xrsp_host = XrspHost()
+
 # find our device
 dev = usb.core.find(idVendor=0x2833) #, idProduct=0x0183
 
@@ -79,8 +82,8 @@ def send_to_topic(topic, msg):
 
         increment += 1
 
-        pkt = TopicPkt(pkt_out)
-        pkt.dump()
+        #pkt = TopicPkt(xrsp_host, pkt_out)
+        #pkt.dump()
 
         #print (hex(len(pkt_out)))
 
@@ -88,16 +91,17 @@ def send_to_topic(topic, msg):
     except usb.core.USBTimeoutError as e:
         print ("Failed to send to topic", hex(topic), e)
 
+# TODO: Figure out why init doesn't work with new read_xrsp
 remainder_bytes = b''
-def read_xrsp():
-    global remainder_bytes
+def old_read_xrsp():
+    global remainder_bytes, xrsp_host
     
     # Parse anything that's whole in the remainder bytes
     try:
         while True:
             if len(remainder_bytes) <= 0:
                 break
-            pkt = TopicPkt(remainder_bytes)
+            pkt = TopicPkt(xrsp_host, remainder_bytes)
             if pkt.missing_bytes() <= 0:
                 pkt.dump()
                 remainder_bytes = pkt.remainder_bytes()
@@ -117,7 +121,7 @@ def read_xrsp():
         f.close()
 
         if len(b) >= 8:
-            pkt = TopicPkt(b)
+            pkt = TopicPkt(xrsp_host, b)
             while pkt.missing_bytes() > 0:
                 #print ("MISSING", hex(pkt.missing_bytes()))
                 _b = bytes(ep_in.read(0x200))
@@ -135,7 +139,16 @@ def read_xrsp():
 
     if len(b) >= 8:
         try:
-            pkt = TopicPkt(b)
+            '''
+            pkt = TopicPkt(xrsp_host, b)
+            if pkt.missing_bytes() > 0:
+                remainder_bytes = b
+            else:
+                remainder_bytes = pkt.remainder_bytes()
+                b = b[:len(b)-len(remainder_bytes)]
+                pkt.dump()
+            '''
+            pkt = TopicPkt(xrsp_host, b)
             remainder_bytes = pkt.remainder_bytes()
             b = b[:len(b)-len(remainder_bytes)]
             pkt.dump()
@@ -143,6 +156,66 @@ def read_xrsp():
             print (e)
 
     return b
+
+working_pkt = None
+remainder_bytes = b''
+def read_xrsp():
+    global working_pkt, xrsp_host
+    
+    f = open("dump_pkts.bin", "ab")
+
+    b = b''
+    while True:
+        try:
+            b = bytes(ep_in.read(0x200))
+
+            f.write(bytes(b))
+
+            if working_pkt is None:
+                working_pkt = TopicPkt(xrsp_host, b)
+            elif working_pkt.missing_bytes() == 0:
+                working_pkt.dump()
+                remains = working_pkt.remainder_bytes()
+                if len(remains) > 0 and len(remains) < 8:
+                    working_pkt = None
+                    print("Weird remainder!")
+                    hex_dump(remains)
+                elif len(remains) > 0:
+                    working_pkt = TopicPkt(xrsp_host, remains)
+                    working_pkt.add_missing_bytes(b)
+                else:
+                    working_pkt = TopicPkt(xrsp_host, b)
+            else:
+                working_pkt.add_missing_bytes(b)
+
+            while working_pkt is not None and working_pkt.missing_bytes() == 0:
+                working_pkt.dump()
+                remains = working_pkt.remainder_bytes()
+                if len(remains) > 0 and len(remains) < 8:
+                    working_pkt = None
+                    print("Weird remainder!")
+                    hex_dump(remains)
+                elif len(remains) > 0:
+                    working_pkt = TopicPkt(xrsp_host, remains)
+                else:
+                    working_pkt = None
+            break
+        except usb.core.USBTimeoutError as e:
+            print ("Failed read", e)
+            f.close()
+            return b
+        except usb.core.USBError as e:
+            print ("Failed read", e)
+            f.close()
+            return b
+
+    f.close()
+    return b
+
+# Clear pkt dump
+f = open("dump_pkts.bin", "wb")
+f.write(b'')
+f.close()
 
 try:
     b = ep_in.read(0x200)
@@ -155,7 +228,7 @@ try:
     f.close()
     hex_dump(reply)
 
-    pkt = TopicPkt(reply)
+    pkt = TopicPkt(xrsp_host, reply)
     pkt.dump()
 except usb.core.USBTimeoutError as e:
     print ("Failed first read", e)
@@ -184,19 +257,19 @@ print ("First send")
 send_to_topic(1, real_first)
 
 print ("First read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("idk send")
 send_to_topic(1, idk_send)
 
 print ("idk read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("Second send")
 send_to_topic(1, second_send)
 
 print ("Second read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("Echo send")
 send_to_topic(1, echo_send)
@@ -211,7 +284,7 @@ print ("Waiting for user to accept...")
 
 while True:
     print ("5 read")
-    ret = read_xrsp()
+    ret = old_read_xrsp()
     if len(ret) > 0:
         break
 
@@ -221,19 +294,19 @@ print ("USB3 send")
 send_to_topic(1, send_usb3)
 
 print ("USB3 read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("USB3_2 send")
 send_to_topic(1, send_usb3_2)
 
 print ("USB3_2 read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("USB3_3 send")
 send_to_topic(1, send_usb3_3)
 
 print ("USB3_3 read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("Echo send")
 send_to_topic(1, echo_send)
@@ -245,7 +318,7 @@ print ("1A send 2")
 send_to_topic(0x1A, send_1a_2)
 
 print ("1A read")
-ret = read_xrsp()
+old_read_xrsp()
 
 print ("1 send")
 send_to_topic(1, idk_send_2)
@@ -256,5 +329,4 @@ send_to_topic(2, send_2_camerastream)
 
 print ("last reads")
 while True:
-    print ("last read")
     ret = read_xrsp()
