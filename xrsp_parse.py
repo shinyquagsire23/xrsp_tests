@@ -448,7 +448,10 @@ class CameraStreamPkt:
             #hex_dump(camera_seq_seg0)
             if camera_which == 1 and camera_seq_seg0_size == 5*8:
                 payload = CameraStream_capnp.PayloadCameraStreamMeta.from_segments(segs)
-                print (bytes(payload.metadata.data).decode("utf-8"))
+                jsondat = bytes(payload.metadata.data).decode("utf-8")
+                with open("camera.json", "w") as f:
+                    f.write(jsondat)
+                    f.close()
                 camera_has_meta = True
             elif camera_which == 1 and camera_has_meta or camera_which == 2:
                 payload = CameraStream_capnp.PayloadCameraStream.from_segments(segs)
