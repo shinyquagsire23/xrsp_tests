@@ -83,3 +83,35 @@ Topics are are 6-bits in length (mask 0x3f). Topics over ID 2 are always encrypt
 | 0x1F | "RuntimeIPC"       |
 | 0x20 | "CameraStream"     |
 | 0x21 | "Logging"          |
+
+## Command pkts ids
+
+Search for `Command result err %d`
+
+| Num  | Function                               |
+|------|----------------------------------------|
+| 0x00 | Termination                            |
+| 0x01 | ?                                      |
+| 0x02 | ?                                      |
+| 0x03 | Calls some funcs in a while loop?      |
+| 0x04 | ?                                      |
+| 0x05 | Sets some bool true                    |
+| 0x06 | Sets some other bool true              |
+| 0x07 | Sets some other bool false (same as 6) |
+| 0x08 | Starts a timer and calls a func        |
+| 0x09 | ?                                      |
+| 0x0A | ?                                      |
+| 0x0B | Reset guardian                         |
+| 0x0C | CHEMX toggle command                   |
+| 0x0D | Start camera frame streaming           |
+| 0x0E | Stop camera frame streaming            |
+| 0x0F | ASW toggle command                     |
+| 0x10 | ?                                      |
+| 0x11 | Drop frames state command              |
+
+## getInputControl (where??)
+| Num  | Function                  |
+|------|---------------------------|
+| 0x00 | ?                         |
+| 0x01 | Toggle hands              |
+| 0x02 | Toggle 3-pt body tracking |
