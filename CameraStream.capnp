@@ -28,3 +28,13 @@ struct PayloadCameraStream {
   unk0 @0 :UInt64;
   unk1 @1 :CameraStruct1;
 }
+
+struct CameraMetaData {
+  dataUnk0 @0 :UInt64;
+  data @1 :List(UInt8);
+}
+
+struct PayloadCameraStreamMeta {
+  unk0 @0 :UInt64;
+  metadata @1 :CameraMetaData;
+}

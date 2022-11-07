@@ -109,13 +109,22 @@ def read_xrsp():
     b = remainder_bytes
 
     try:
+        start_idx = len(b)
         b += bytes(ep_in.read(0x200))
         b += bytes(ep_in.read(0x200))
+        f = open("dump_pkts.bin", "ab")
+        f.write(b[start_idx:])
+        f.close()
+
         if len(b) >= 8:
             pkt = TopicPkt(b)
             while pkt.missing_bytes() > 0:
-                print ("MISSING", hex(pkt.missing_bytes()))
+                #print ("MISSING", hex(pkt.missing_bytes()))
                 _b = bytes(ep_in.read(0x200))
+                f = open("dump_pkts.bin", "ab")
+                f.write(_b)
+                f.close()
+
                 pkt.add_missing_bytes(_b)
                 b += _b
         
@@ -128,13 +137,10 @@ def read_xrsp():
         try:
             pkt = TopicPkt(b)
             remainder_bytes = pkt.remainder_bytes()
-            b = b[:len(remainder_bytes)]
+            b = b[:len(b)-len(remainder_bytes)]
             pkt.dump()
         except Exception as e:
             print (e)
-        f = open("dump_pkts.bin", "ab")
-        f.write(b)
-        f.close()
 
     return b
 

@@ -32,5 +32,5 @@ if __name__ == '__main__':
         #print("Remains:")
         #hex_dump(pkt.remainder_bytes())
         remainder = pkt.remainder_bytes() + remainder
-        #print ("At:", hex(full_size - len(remainder)))
+        print ("At:", hex(full_size - len(remainder)))
         #hex_dump(remainder[:0x200])

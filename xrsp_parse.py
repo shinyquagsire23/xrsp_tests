@@ -3,6 +3,7 @@ import struct
 
 import capnp
 import Logging_capnp
+import CameraStream_capnp
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -203,6 +204,8 @@ class TopicPkt:
             self.specificObj = AudioPkt(self.payload)
         elif self.topic_idx == TOPIC_CAMERA_STREAM:
             self.specificObj = CameraStreamPkt(self.payload, self.sequence)
+        elif self.topic_idx >= TOPIC_SLICE_0 and self.topic_idx <= TOPIC_SLICE_15:
+            self.specificObj = SlicePkt(self.payload)
         elif self.topic_idx == TOPIC_LOGGING:
             self.specificObj = LoggingPkt(self.payload)
 
@@ -362,6 +365,38 @@ class AudioPkt:
         except Exception as e:
             print (e)
 
+class SlicePkt:
+
+    def __init__(self, b):
+        if len(b) < 8:
+            print ("Bad pkt!")
+            return
+
+        self.payload = b[0xA:]
+
+    def dump(self):
+        print ("PosePkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
+
+        try:
+            parser = CapnpParser(self.payload)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+
+camera_has_meta = False
+camera_seq_collecting = False
+camera_which = 0
+camera_seq_seg0_size = 0
+camera_seq_seg1_size = 0
+camera_seq_seg2_size = 0
+
+camera_seq_seg0 = b''
+camera_seq_seg1 = b''
+camera_seq_seg2 = b''
+
 class CameraStreamPkt:
 
     def __init__(self, b, seq):
@@ -373,19 +408,84 @@ class CameraStreamPkt:
         self.payload = b[0x0:]
 
     def dump(self):
+        global camera_seq_collecting, camera_which, camera_seq_seg0_size, camera_seq_seg1_size, camera_seq_seg2_size
+        global camera_seq_seg0, camera_seq_seg1, camera_seq_seg2, camera_has_meta
+
         print ("CameraStreamPkt:", hex(len(self.payload)), hex(self.seq))
+        if len(self.payload) == 0x10 and not camera_seq_collecting:
+            camera_seq_collecting = True
+            camera_which, camera_seq_seg0_size, camera_seq_seg1_size, camera_seq_seg2_size = struct.unpack("<LLLL", self.payload)
+            
+            print("Decoding camera which: " + hex(camera_which) + " (" + hex(camera_seq_seg0_size) + ", " + hex(camera_seq_seg1_size) + ", " + hex(camera_seq_seg2_size) + ")")
+
+            camera_seq_seg0_size *= 8
+            camera_seq_seg1_size *= 8
+            camera_seq_seg2_size *= 8
+
+            camera_seq_seg0 = b''
+            camera_seq_seg1 = b''
+            camera_seq_seg2 = b''
+            return
+
+        if camera_seq_collecting and len(camera_seq_seg0) < camera_seq_seg0_size:
+            camera_seq_seg0 += self.payload
+            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
+        elif camera_seq_collecting and len(camera_seq_seg1) < camera_seq_seg1_size:
+            camera_seq_seg1 += self.payload
+            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
+        elif camera_seq_collecting and len(camera_seq_seg2) < camera_seq_seg2_size:
+            camera_seq_seg2 += self.payload
+            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
+        
+        seg0_left = camera_seq_seg0_size - len(camera_seq_seg0)
+        seg1_left = camera_seq_seg1_size - len(camera_seq_seg1)
+        seg2_left = camera_seq_seg2_size - len(camera_seq_seg2)
+
+        if camera_seq_collecting and seg0_left <= 0 and seg1_left <= 0 and seg2_left <= 0:
+            print (hex(len(camera_seq_seg0)), hex(len(camera_seq_seg1)), hex(len(camera_seq_seg2)))
+
+            segs = [camera_seq_seg0, camera_seq_seg1, camera_seq_seg2]
+            #hex_dump(camera_seq_seg0)
+            if camera_which == 1 and camera_seq_seg0_size == 5*8:
+                payload = CameraStream_capnp.PayloadCameraStreamMeta.from_segments(segs)
+                print (bytes(payload.metadata.data).decode("utf-8"))
+                camera_has_meta = True
+            elif camera_which == 1 and camera_has_meta or camera_which == 2:
+                payload = CameraStream_capnp.PayloadCameraStream.from_segments(segs)
+
+                idx = 0
+                for d in payload.unk1.struct1Unk4:
+                    dat = bytes(d.data)
+                    print (hex(len(dat)))
+                    with open("camera_seq_" + str(self.seq) + "_" + str(idx) + ".bin", "wb") as f:
+                        f.write(dat)
+                        f.close()
+                    idx += 1
+
+            camera_seq_collecting = False
+            camera_seq_seg0 = b''
+            camera_seq_seg1 = b''
+            camera_seq_seg2 = b''
+
+            return
+
         if len(self.payload) <= 0x8:
             #hex_dump(self.payload)
             return
 
-        with open("camera_seq_" + str(self.seq) + ".bin", "wb") as f:
-            f.write(self.payload)
+        #with open("camera_seq_" + str(self.seq) + ".bin", "wb") as f:
+        #    f.write(self.payload)
 
         if len(self.payload) > 0x200:
             return
 
+        #test = CameraStream_capnp.PayloadCameraStream.new_message()
+
+
+        '''
         try:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
         except Exception as e:
             print (e)
+        '''

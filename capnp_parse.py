@@ -94,7 +94,11 @@ class CapnpParser:
             ret += (totalSize // 8)
 
         elif a == 2: # inter-segment ptr
-            print (prefix + "inter-seg")
+            landingPadSize = (word >> 2) & 1
+            dataOffs = (word >> 3) & 0x1FFFFFFF
+            segmentId = (word >> 32)
+            print (prefix + "inter-seg: landingPadSize=" + hex(landingPadSize) + ", dataOffs=" + hex(dataOffs) + ", segmentId=" + hex(segmentId))
+
         elif a == 3: # capabilities
             print (prefix + "capability")
         return ret
