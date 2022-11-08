@@ -207,7 +207,8 @@ class GenericState:
 class XrspHost:
 
     def __init__(self):
-        self.topics_mute = [TOPIC_AUI4A_ADV, TOPIC_POSE, TOPIC_AUDIO]
+        self.topics_mute = [TOPIC_AUI4A_ADV, TOPIC_POSE, TOPIC_HANDS, TOPIC_AUDIO, TOPIC_CAMERA_STREAM]
+        #self.topics_mute = [TOPIC_AUI4A_ADV, TOPIC_POSE, TOPIC_AUDIO]
 
         self.camera_state = CameraStreamState()
         self.pose_state = GenericState()
@@ -273,6 +274,10 @@ class TopicPkt:
             self.specificObj = PosePkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_AUDIO:
             self.specificObj = AudioPkt(self.host, self.payload)
+        elif self.topic_idx == TOPIC_HANDS:
+            self.specificObj = HandsPkt(self.host, self.payload)
+        elif self.topic_idx == TOPIC_SKELETON:
+            self.specificObj = SkeletonPkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_CAMERA_STREAM:
             self.specificObj = CameraStreamPkt(self.host, self.payload, self.sequence)
         elif self.topic_idx >= TOPIC_SLICE_0 and self.topic_idx <= TOPIC_SLICE_15:
@@ -486,7 +491,7 @@ class PosePkt:
         '''
 
         try:
-            #print (self.printable)
+            print (self.printable)
             pass
         except Exception as e:
             print (e)
@@ -546,6 +551,178 @@ class AudioPkt:
             pass
         except Exception as e:
             print (e)
+
+class HandPose:
+
+    def __init__(self, b):
+        if len(b) != 0x290:
+            return
+        self.raw = b
+
+        # similar to ovrHandPose
+
+        idx = 0
+        def read_u32():
+            nonlocal idx, b
+            val = struct.unpack("<L", b[idx:idx+4])[0]
+            idx += 4
+            return val
+
+        def read_f32():
+            nonlocal idx, b
+            val = struct.unpack("<f", b[idx:idx+4])[0]
+            idx += 4
+            return val
+
+        def read_f64():
+            nonlocal idx, b
+            val = struct.unpack("<d", b[idx:idx+8])[0]
+            idx += 8
+            return val
+
+        def read_vec3():
+            val = [read_f32(), read_f32(), read_f32()]
+            return val
+
+        def read_quat():
+            val = [read_f32(), read_f32(), read_f32(), read_f32()]
+            return val
+
+        self.unk_00 = read_u32()
+        self.trackingStatus = read_u32() # ovrHandTrackingStatus
+
+        self.rootPos = [0.0] * (4+3) # quat+vec3
+        self.unk2 = [0] * 3
+        self.boneRots = [[0.0] * 4]*24
+        self.requestedTimeStamp = 0.0
+        self.sampleTimeStamp = 0.0
+        self.fingerConfidence = [0.0] * 5
+        self.unk4 = [0.0] * 26
+        self.unk5 = [0.0] * 5
+        self.unk6 = [0.0] * 7 # elbow?
+        self.unk7 = [0.0] * 5
+
+        for i in range(0, 4+3):
+            self.rootPos[i] = read_f32()
+
+        
+        for i in range(0, 3):
+            self.unk2[i] = read_f32()
+
+        for i in range(0, 24):
+            self.boneRots[i] = read_quat()
+
+        self.requestedTimeStamp = read_f64()
+        self.sampleTimeStamp = read_f64()
+
+        self.handConfidence = read_f32()
+        self.handScale = read_f32()
+
+        for i in range(0, 5):
+            self.fingerConfidence = read_f32()
+
+        read_u32()
+        read_u32()
+
+        for i in range(0, 26):
+            self.unk4[i] = read_f32()
+
+        for i in range(0, 5):
+            self.unk5[i] = read_f32()
+
+        for i in range(0, 7):
+            self.unk6[i] = read_f32()
+
+        for i in range(0, 5):
+            self.unk7[i] = read_u32()
+
+    def dump(self):
+        print ("  unk_00: " + hex(self.unk_00))
+        print ("  trackingStatus: " + hex(self.trackingStatus))
+        print ("  rootPos:",self.rootPos)
+        print ("  unk2:",self.unk2)
+        print ("  boneRots:",self.boneRots)
+        print ("  requestedTimeStamp:",self.requestedTimeStamp)
+        print ("  sampleTimeStamp:",self.sampleTimeStamp)
+        print ("  fingerConfidence:",self.fingerConfidence)
+        print ("  unk4:",self.unk4)
+        print ("  unk5:",self.unk5)
+        print ("  unk6:",self.unk6)
+        print ("  unk7:",self.unk7)
+        #print ("data:",self.data)
+        #hex_dump(self.raw)
+
+
+class HandsPkt:
+
+    def __init__(self, host, b):
+        if len(b) < 8:
+            print ("Bad hands pkt!")
+            hex_dump(b)
+            return
+
+        self.host = host
+        self.payload = b[0:]
+
+        if len(self.payload) <= 0x8:
+            return
+
+        # TODO check size
+        unk_00, unk_04 = struct.unpack("<LL", self.payload[:8])
+        hand_l_bin = self.payload[8:8+0x290]
+        hand_r_bin = self.payload[8+0x290:8+0x290+0x290]
+
+        self.hand_l = HandPose(hand_l_bin)
+        self.hand_r = HandPose(hand_r_bin)
+
+    def dump(self):
+        print ("HandsPkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
+
+        '''
+        try:
+            parser = CapnpParser(self.payload)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+        '''
+        print ("Left hand:")
+        self.hand_l.dump()
+        print ("Right hand:")
+        self.hand_r.dump()
+
+        
+
+class SkeletonPkt:
+
+    def __init__(self, host, b):
+        if len(b) < 8:
+            print ("Bad skeleton pkt!")
+            hex_dump(b)
+            return
+
+        self.host = host
+        self.payload = b[0:]
+
+    def dump(self):
+        print ("SkeletonPkt:", hex(len(self.payload)))
+        if len(self.payload) <= 0x8:
+            hex_dump(self.payload)
+            return
+
+        '''
+        try:
+            parser = CapnpParser(self.payload)
+            parser.parse_entry(0)
+        except Exception as e:
+            print (e)
+        '''
+
+        # TODO check size
+        #unk_00, unk_04 = struct.unpack("<LL", self.payload[:8])
+        #hex_dump(self.payload)
 
 class SlicePkt:
 
@@ -632,9 +809,9 @@ class CameraStreamPkt:
                         self.host.camera_state.pixels = np.frombuffer(dat, dtype=np.uint8).reshape(1024,1280)
                         self.host.update()
 
-                    with open("camera_seq_" + str(self.seq) + "_" + str(idx) + ".bin", "wb") as f:
-                        f.write(dat)
-                        f.close()
+                    #with open("camera_seq_" + str(self.seq) + "_" + str(idx) + ".bin", "wb") as f:
+                    #    f.write(dat)
+                    #    f.close()
                     idx += 1
 
             self.host.camera_state.seq_collecting = False
