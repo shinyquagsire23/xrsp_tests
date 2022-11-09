@@ -157,12 +157,10 @@ class HostInfoPkt:
             hex_dump(b)
             return
 
-        header_0, unk_4, unk_8, len_u64s = struct.unpack("<LLLL", b[:0x10])
+        header_0, unk_4 = struct.unpack("<LL", b[:0x8])
 
         self.header_0 = header_0
         self.unk_4 = unk_4
-        self.unk_8 = unk_8
-        self.len_u64s = len_u64s
         
 
         # decode header_0
@@ -170,6 +168,9 @@ class HostInfoPkt:
         self.result = (header_0 >> 4) & 0x1FF
         self.stream_size = (header_0 >> 12) & 0xFFFFC
         self.unk_30_31 = (header_0 >> 30)
+
+        self.unk_8 = 0
+        self.len_u64s = 0
 
         self.echo_org = -1
         self.echo_recv = -1
@@ -180,7 +181,31 @@ class HostInfoPkt:
             self.payload = b[8:]
             self.echo_org, self.echo_recv, self.echo_xmt, self.echo_offset = struct.unpack("<QQQQ", self.payload)
         else:
+            self.unk_8, self.len_u64s = struct.unpack("<LL", b[8:0x10])
             self.payload = b[0x10:]
+
+    def craft_echo(host, result, echo_id, org, recv, xmt, offset):
+        return HostInfoPkt.craft(host, BUILTIN_ECHO, result, 0x28, 0, echo_id, struct.pack("<QQQQ", org, recv, xmt, offset))
+
+    def craft_basic(host, message_type, result, stream_size, unk_4, payload):
+        return HostInfoPkt.craft(host, message_type, result, stream_size, 0, unk_4, payload)
+
+    def craft(host, message_type, result, stream_size, unk_30_31, unk_4, payload):
+
+        header_0 = (message_type & 0xF) | ((result & 0x1FF) << 4) | ((stream_size & 0xFFFFC) << 12) | ((unk_30_31 & 3) << 30)
+        b = struct.pack("<LL", header_0, unk_4) + payload
+
+        return HostInfoPkt(host, b)
+
+    def to_bytes(self):
+        self.header_0 = (self.message_type & 0xF) | ((self.result & 0x1FF) << 4) | ((self.stream_size & 0xFFFFC) << 12) | ((self.unk_30_31 & 3) << 30)
+        b = struct.pack("<LL", self.header_0, self.unk_4)
+        if self.message_type == BUILTIN_ECHO:
+            b += struct.pack("<QQQQ", self.echo_org, self.echo_recv, self.echo_xmt, self.echo_offset)
+        else:
+            b += struct.pack("<LL", self.unk_8, self.len_u64s)
+        b += self.payload
+        return b
 
     def dump(self):
         print ("HostInfoPkt:")
