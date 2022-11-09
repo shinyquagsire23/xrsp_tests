@@ -12,6 +12,8 @@ from utils import hex_dump
 # All the video slices
 #(((usb.data_len > 0) && (usb.endpoint_address != 0x81) && (usb.endpoint_address != 0x01))) && (usb.endpoint_address != 0x00) && (usb.endpoint_address != 0x80) && (usb.capdata[0x1] >= 0x0A && usb.capdata[0x1] < 0x1A)
 
+#(usb.capdata[0x1] != 0x0A)
+
 #ffmpeg -framerate 24 -f h264 -i 264_test2.bin -analyzeduration 100M -probesize 100M -vcodec copy slice_idk.mp4
 
 if __name__ == '__main__':
@@ -28,6 +30,8 @@ if __name__ == '__main__':
     contig = b''
     idx = 0x18
 
+    out_idx = 0
+
     try:
         while True:
             idx += 0x8
@@ -42,7 +46,22 @@ if __name__ == '__main__':
             pkt_size_file -= 0x1B
             real_pkt_size -= 0x1B
 
-            contig += contents[idx:idx+real_pkt_size]
+            b = contents[idx:idx+real_pkt_size]
+
+            '''
+            if b[1] == TOPIC_RUNTIME_IPC and contents[idx-0x1b+0x15] == 0x02:
+                f = open("ipc_baked_" + str(out_idx) + ".bin", "wb")
+                f.write(b)
+                f.close()
+                out_idx += 1
+            '''
+            if b[1] >= TOPIC_SLICE_0 and b[1] <= TOPIC_SLICE_15 and contents[idx-0x1b+0x15] == 0x02:
+                f = open("video_baked_" + str(out_idx) + ".bin", "wb")
+                f.write(b)
+                f.close()
+                out_idx += 1
+
+            contig += b
 
             idx += pkt_size_file
             if idx >= len(contents):

@@ -1,234 +1,24 @@
-# Requires pyusb
-import usb.core
-import usb.util
+
 import struct
 import time
 
 from capnp_parse import CapnpParser
 from xrsp_parse import *
+from xrsp_host import *
+from xrsp_constants import *
 from utils import hex_dump
 
 # XRSP host context
 xrsp_host = XrspHost()
+xrsp_host.init_usb()
 
-# find our device
-dev = usb.core.find(idVendor=0x2833) #, idProduct=0x0183
-
-def test(e):
-    print(hex(e.bEndpointAddress))
-    return False#usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
-
-# was it found?
-if dev is None:
-    raise ValueError('Device not found')
-
-#dev.reset()
-
-# set the active configuration. With no arguments, the first
-# configuration will be the active one
-dev.set_configuration()
-
-# get an endpoint instance
-cfg = dev.get_active_configuration()
-intf = None
-for i in range(0, 10):
-    intf = cfg[(i,0)]
-    if "XRSP" in str(intf):
-        print (intf)
-        break
-
-
-ep_out = usb.util.find_descriptor(
-    intf,
-    # match the first OUT endpoint
-    custom_match = \
-    lambda e: \
-        usb.util.endpoint_direction(e.bEndpointAddress) == \
-        usb.util.ENDPOINT_OUT)
-
-ep_in = usb.util.find_descriptor(
-    intf,
-    # match the first OUT endpoint
-    custom_match = \
-    lambda e: \
-        usb.util.endpoint_direction(e.bEndpointAddress) == \
-        usb.util.ENDPOINT_IN)
-
+reply = b''
 try:
-    ep_out.clear_halt()
-except:
-    a='a'
-
-try:
-    ep_in.clear_halt()
-except:
-    a='a'
-
-reply = bytes(b'')
-
-increment = 0
-
-def send_to_topic(topic, msg, aligned=True):
-    global increment
-    try:
-        pkt_out = struct.pack("<BBHHH", 0x10 if aligned else 0x18, topic, (len(msg) // 4)+1, increment, 0)
-        pkt_out += bytes(msg)
-        to_fill = (0x400 - len(pkt_out)) - 6
-        pkt_out += struct.pack("<BBHH", 0x10, 0x0, (to_fill // 4)+1, increment)
-        #hex_dump(pkt_out)
-        pkt_out += b'\x00' * to_fill
-
-        #hex_dump(pkt_out)
-
-        increment += 1
-
-        #pkt = TopicPkt(xrsp_host, pkt_out)
-        #pkt.dump()
-
-        #print (hex(len(pkt_out)))
-
-        ep_out.write(pkt_out)
-    except usb.core.USBTimeoutError as e:
-        print ("Failed to send to topic", hex(topic), e)
-
-def send_to_topic_capnp_wrapped(topic, idx, msg):
-    prelude = struct.pack("<LL", idx, len(msg) // 8)
-
-    send_to_topic(topic, prelude)
-    send_to_topic(topic, msg)
-
-# TODO: Figure out why init doesn't work with new read_xrsp
-remainder_bytes = b''
-def old_read_xrsp():
-    global remainder_bytes, xrsp_host
-    
-    # Parse anything that's whole in the remainder bytes
-    try:
-        while True:
-            if len(remainder_bytes) <= 0:
-                break
-            pkt = TopicPkt(xrsp_host, remainder_bytes)
-            if pkt.missing_bytes() <= 0:
-                pkt.dump()
-                remainder_bytes = pkt.remainder_bytes()
-            else:
-                break
-    except Exception as e:
-        print (e)
-
-    b = remainder_bytes
-
-    try:
-        start_idx = len(b)
-        b += bytes(ep_in.read(0x200))
-        b += bytes(ep_in.read(0x200))
-        f = open("dump_pkts.bin", "ab")
-        f.write(b[start_idx:])
-        f.close()
-
-        if len(b) >= 8:
-            pkt = TopicPkt(xrsp_host, b)
-            while pkt.missing_bytes() > 0:
-                #print ("MISSING", hex(pkt.missing_bytes()))
-                _b = bytes(ep_in.read(0x200))
-                f = open("dump_pkts.bin", "ab")
-                f.write(_b)
-                f.close()
-
-                pkt.add_missing_bytes(_b)
-                b += _b
-        
-    except usb.core.USBTimeoutError as e:
-        print ("Failed read", e)
-    except usb.core.USBError as e:
-        print ("Failed read", e)
-
-    if len(b) >= 8:
-        try:
-            '''
-            pkt = TopicPkt(xrsp_host, b)
-            if pkt.missing_bytes() > 0:
-                remainder_bytes = b
-            else:
-                remainder_bytes = pkt.remainder_bytes()
-                b = b[:len(b)-len(remainder_bytes)]
-                pkt.dump()
-            '''
-            pkt = TopicPkt(xrsp_host, b)
-            remainder_bytes = pkt.remainder_bytes()
-            b = b[:len(b)-len(remainder_bytes)]
-            pkt.dump()
-        except Exception as e:
-            print (e)
-
-    return b
-
-working_pkt = None
-remainder_bytes = b''
-def read_xrsp():
-    global working_pkt, xrsp_host
-    
-    f = open("dump_pkts.bin", "ab")
-
-    b = b''
-    while True:
-        try:
-            b = bytes(ep_in.read(0x200))
-
-            f.write(bytes(b))
-
-            if working_pkt is None:
-                working_pkt = TopicPkt(xrsp_host, b)
-            elif working_pkt.missing_bytes() == 0:
-                working_pkt.dump()
-                remains = working_pkt.remainder_bytes()
-                if len(remains) > 0 and len(remains) < 8:
-                    working_pkt = None
-                    print("Weird remainder!")
-                    hex_dump(remains)
-                elif len(remains) > 0:
-                    working_pkt = TopicPkt(xrsp_host, remains)
-                    working_pkt.add_missing_bytes(b)
-                else:
-                    working_pkt = TopicPkt(xrsp_host, b)
-            else:
-                working_pkt.add_missing_bytes(b)
-
-            while working_pkt is not None and working_pkt.missing_bytes() == 0:
-                working_pkt.dump()
-                remains = working_pkt.remainder_bytes()
-                if len(remains) > 0 and len(remains) < 8:
-                    working_pkt = None
-                    print("Weird remainder!")
-                    hex_dump(remains)
-                elif len(remains) > 0:
-                    working_pkt = TopicPkt(xrsp_host, remains)
-                else:
-                    working_pkt = None
-            break
-        except usb.core.USBTimeoutError as e:
-            print ("Failed read", e)
-            f.close()
-            return b
-        except usb.core.USBError as e:
-            print ("Failed read", e)
-            f.close()
-            return b
-
-    f.close()
-    return b
-
-# Clear pkt dump
-f = open("dump_pkts.bin", "wb")
-f.write(b'')
-f.close()
-
-try:
-    b = ep_in.read(0x200)
+    b = xrsp_host.ep_in.read(0x200)
     f = open("dump_test_quest.bin", "wb")
     f.write(bytes(b))
     reply += bytes(b)
-    b = ep_in.read(0x200)
+    b = xrsp_host.ep_in.read(0x200)
     f.write(bytes(b))
     reply += bytes(b)
     f.close()
@@ -263,74 +53,74 @@ send_cmd_body = struct.pack("<LLHHLLL", 0, 2, 2, 1, 0, 0, 0)
 send_cmd_hands = struct.pack("<LLHHLLL", 0, 2, 1, 1, 0, 0, 0)
 
 print ("OK send")
-send_to_topic(1, response_ok)
+xrsp_host.send_to_topic(1, response_ok)
 
 print ("OK read")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Codegen send")
-send_to_topic(1, request_codegen)
+xrsp_host.send_to_topic(1, request_codegen)
 
 print ("Codegen read")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Pairing send")
-send_to_topic(1, request_pairing)
+xrsp_host.send_to_topic(1, request_pairing)
 
 print ("Pairing read")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Echo send")
-send_to_topic(1, request_echo)
+xrsp_host.send_to_topic(1, request_echo)
 
 print ("Video idk cmd send")
-send_to_topic_capnp_wrapped(TOPIC_VIDEO, 0, request_video_idk)
+xrsp_host.send_to_topic_capnp_wrapped(TOPIC_VIDEO, 0, request_video_idk)
 
 print ("Waiting for user to accept...")
 
 while True:
     print ("5 read")
-    ret = old_read_xrsp()
+    ret = xrsp_host.old_read_xrsp()
     if len(ret) > 0:
         break
 
 print ("Done?")
 
 print ("OK send #2")
-send_to_topic(TOPIC_HOSTINFO_ADV, response_ok_2)
+xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, response_ok_2)
 
 print ("OK read #2")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Codegen send #2")
-send_to_topic(TOPIC_HOSTINFO_ADV, request_codegen_2)
+xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_codegen_2)
 
 print ("Codegen read #2")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Pairing send #2")
-send_to_topic(TOPIC_HOSTINFO_ADV, request_pairing_2)
+xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_pairing_2)
 
 print ("Pairing read #2")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("Echo send")
-send_to_topic(TOPIC_HOSTINFO_ADV, request_echo)
+xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_echo)
 
 print ("Audio Control cmd send")
-send_to_topic_capnp_wrapped(TOPIC_AUDIO_CONTROL, 0, send_audiocontrol_idk)
+xrsp_host.send_to_topic_capnp_wrapped(TOPIC_AUDIO_CONTROL, 0, send_audiocontrol_idk)
 
 print ("1A read")
-old_read_xrsp()
+xrsp_host.old_read_xrsp()
 
 print ("1 send")
-send_to_topic(TOPIC_HOSTINFO_ADV, idk_send_2)
+xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, idk_send_2)
 
 print ("2 sends")
-send_to_topic(TOPIC_COMMAND, send_cmd_chemx_toggle)
-send_to_topic(TOPIC_COMMAND, send_cmd_asw_toggle)
-send_to_topic(TOPIC_COMMAND, send_cmd_dropframestate_toggle)
-send_to_topic(TOPIC_COMMAND, send_cmd_camerastream)
+#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_chemx_toggle)
+#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_asw_toggle)
+#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_dropframestate_toggle)
+#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_camerastream)
 
 '''
 h264_1 = open("h264_1.bin", "rb").read()
@@ -339,17 +129,17 @@ h264_3 = open("h264_3.bin", "rb").read()
 h264_dat = open("h264_dat.bin", "rb").read()
 
 for i in range(TOPIC_SLICE_0, TOPIC_SLICE_4):
-    send_to_topic_capnp_wrapped(i, 0, h264_1)
-    #read_xrsp()
-    #send_to_topic(i, h264_2)
-    #read_xrsp()
+    xrsp_host.send_to_topic_capnp_wrapped(i, 0, h264_1)
+    #xrsp_host.read_xrsp()
+    #xrsp_host.send_to_topic(i, h264_2)
+    #xrsp_host.read_xrsp()
 
     try:
-        #ep_out.write(h264_3)
+        #xrsp_host.ep_out.write(h264_3)
         #h264_dat = h264_dat[0:1] + bytes([i]) + h264_dat[2:]
         h264_dat = h264_3[0:1] + bytes([i]) + h264_3[2:]
-        ep_out.write(h264_dat)
-        read_xrsp()
+        xrsp_host.ep_out.write(h264_dat)
+        xrsp_host.read_xrsp()
     except usb.core.USBTimeoutError as e:
         print ("Failed to send to topic", hex(i), e)
 '''
@@ -357,19 +147,54 @@ for i in range(TOPIC_SLICE_0, TOPIC_SLICE_4):
 '''
 h264_dat = open("h264_dat.bin", "rb").read()
 for i in range(TOPIC_SLICE_0, TOPIC_SLICE_5):
-    read_xrsp()
+    xrsp_host.read_xrsp()
     try:
         h264_dat = h264_dat[0:1] + bytes([i]) + h264_dat[2:]
 
-        ep_out.write(h264_dat)
+        xrsp_host.ep_out.write(h264_dat)
     except usb.core.USBTimeoutError as e:
         print ("Failed to send to topic", hex(i), e)
-    read_xrsp()
+    xrsp_host.read_xrsp()
 '''
 
-#send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_hands)
-#send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_body)
+# Replay IPC packets
+'''
+for i in range(0, 18):
+    f = open("ipc_baked/ipc_baked_" + str(i) + ".bin", "rb")
+    dat = f.read()
+    f.close()
+    xrsp_host.read_xrsp()
+    try:
+        xrsp_host.ep_out.write(dat)
+    except usb.core.USBTimeoutError as e:
+        print ("Failed to send baked IPC", e)
+    xrsp_host.read_xrsp()
+'''
+
+# Replay H.264 data
+
+for i in range(0, 10):
+    xrsp_host.read_xrsp()
+    #xrsp_host.send_to_topic(1, request_echo)
+
+while True:
+    for i in range(0, 1220): #1220 7550
+        f = open("video_baked/video_baked_" + str(i) + ".bin", "rb")
+        dat = f.read()
+        f.close()
+        #xrsp_host.read_xrsp()
+        try:
+            xrsp_host.ep_out.write(dat)
+        except usb.core.USBTimeoutError as e:
+            print ("Failed to send baked video", e)
+        print (str(i))
+        xrsp_host.read_xrsp()
+        #xrsp_host.send_to_topic(1, request_echo)
+
+
+#xrsp_host.send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_hands)
+#xrsp_host.send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_body)
 
 print ("last reads")
 while True:
-    ret = read_xrsp()
+    ret = xrsp_host.read_xrsp()
