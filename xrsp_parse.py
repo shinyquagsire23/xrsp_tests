@@ -4,12 +4,14 @@ import struct
 # Draw cameras
 import pygame
 import numpy as np
+import json
 
 import capnp
 import Logging_capnp
 import CameraStream_capnp
 import Pose_capnp
 import Audio_capnp
+import RuntimeIPC_capnp
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -17,6 +19,10 @@ from utils import hex_dump
 # pycapnp expects some length header.
 def append_size(b):
     return struct.pack("<LL", 0, len(b) // 8) + b
+
+RIPC_MSG_CONNECT_TO_REMOTE_SERVER = 0x1
+RIPC_MSG_RPC = 0x2
+RIPC_MSG_ENSURE_SERVICE_STARTED = 0x4
 
 BUILTIN_PAIRING_ACK = 0x0
 BUILTIN_INVITE = 0x1
@@ -69,6 +75,7 @@ TOPIC_23 = 0x23
 
 STATE_SEGMENT_META = 0
 STATE_SEGMENT_READ = 1
+STATE_EXT_READ = 2
 
 POSEDATA_0 = 0x0
 
@@ -195,14 +202,17 @@ class GenericState:
     def __init__(self):
         self.state = STATE_SEGMENT_META
 
-        self.type_idx = 0
-        self.seg0_size = 0
-        self.seg0 = b''
+        self.reset()
 
     def reset(self):
         self.type_idx = 0
         self.seg0_size = 0
         self.seg0 = b''
+        self.seg1_size = 0
+        self.seg1 = b''
+
+        # runtime IPC
+        self.timestamp = 0
 
 class XrspHost:
 
@@ -214,23 +224,31 @@ class XrspHost:
         self.pose_state = GenericState()
         self.audio_state = GenericState()
         self.logging_state = GenericState()
+        self.ipc_state = GenericState()
+
+        self.touchpad_pos = (0,0)
+        self.touchpad_z = 0.0
 
         self.window = pygame.display.set_mode((1280, 1024))
         pygame.display.set_caption('Camera')
         self.update()
 
     def update(self):
-        background_color = (234, 212, 252)
+        background_color = (0, 0, 0)
         self.window.fill(background_color)
 
+        
         pixel_array = pygame.PixelArray(self.window)
 
         for x in range(0, 1280):
             for y in range(0, 1024):
                 val = self.camera_state.pixels[y,x]
                 pixel_array[x,y] = (val,val,val)
+        
 
-        pixel_array.close()
+        pygame.draw.circle(self.window, (int(self.touchpad_z * 255),255,0), self.touchpad_pos, 20 + (self.touchpad_z * 20))
+
+        #pixel_array.close()
         pygame.display.flip()
 
 class TopicPkt:
@@ -255,13 +273,18 @@ class TopicPkt:
         self.unk_14_15 = (topic_raw >> 14) & 0x3
         self.num_words = num_words
         self.real_size = ((self.num_words - 1) * 4)
+        self.full_size = ((self.num_words - 1) * 4)
 
         self.do_handoff = False
 
         self.payload = b[8:]
+
+        if self.bHasAlignPadding and len(self.payload) >= self.real_size:
+            self.real_size -= self.payload[self.real_size-1]
+
         self.payload = self.payload[:self.real_size]
 
-        self.payload_remainder = b[8+len(self.payload):]
+        self.payload_remainder = b[8+self.full_size:]
 
         self.specificObj = None
 
@@ -282,14 +305,18 @@ class TopicPkt:
             self.specificObj = CameraStreamPkt(self.host, self.payload, self.sequence)
         elif self.topic_idx >= TOPIC_SLICE_0 and self.topic_idx <= TOPIC_SLICE_15:
             self.specificObj = SlicePkt(self.host, self.payload)
+        elif self.topic_idx == TOPIC_RUNTIME_IPC:
+            self.specificObj = RuntimeIPCPkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_LOGGING:
             self.specificObj = LoggingPkt(self.host, self.payload)
 
     def missing_bytes(self):
-        amt = ((self.num_words - 1) * 4) - len(self.payload)
+        amt = self.real_size - len(self.payload)
+        '''
         if self.num_words == 0xFFFF and amt == 0:
             self.do_handoff = True
             return 0x200
+        '''
         if amt >= 0:
             return amt
         return 0
@@ -299,6 +326,11 @@ class TopicPkt:
             topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
             self.num_words += num_words - 1
             self.real_size = ((self.num_words - 1) * 4)
+
+            # padding subtract
+            if (topic_raw & 8) == 8:
+                self.real_size -= self.payload[self.real_size-1]
+
             b = b[8:]
             self.do_handoff = False
 
@@ -306,6 +338,11 @@ class TopicPkt:
         before = len(self.payload)
         self.payload = self.payload[:self.real_size]
         after = len(self.payload)
+
+        if self.bHasAlignPadding and len(self.payload) >= self.real_size:
+            self.real_size -= self.payload[self.real_size-1]
+            self.payload = self.payload[:self.real_size]
+
         self.payload_remainder = b[len(b) - (before-after):]
 
     def remainder_bytes(self):
@@ -316,13 +353,14 @@ class TopicPkt:
 
     def dump(self):
         # Don't print aui4a-adv padding for now
-        if self.topic_idx in self.host.topics_mute:
-            return
-
+        
         if self.missing_bytes() == 0:
             self.rebuild_specific()
         else:
             print ("Missing %x bytes..." % self.missing_bytes())
+            return
+
+        if self.topic_idx in self.host.topics_mute:
             return
 
         print ("TopicPkt:")
@@ -385,6 +423,74 @@ class HostInfoPkt:
         except Exception as e:
             a='a'
 
+class RuntimeIPCPkt:
+
+    def __init__(self, host, b):
+        if len(b) < 8:
+            print ("Bad ipc pkt!")
+            hex_dump(b)
+            return
+
+        self.host = host
+        self.payload = b[0x0:]
+
+        self.printable = ""
+
+        if self.host.ipc_state.state == STATE_SEGMENT_META:
+            self.host.ipc_state.reset()
+            self.host.ipc_state.type_idx, self.host.ipc_state.seg0_size = struct.unpack("<LL", self.payload[:8])
+
+            self.host.ipc_state.seg0_size *= 8
+
+            self.host.ipc_state.state = STATE_SEGMENT_READ
+        elif self.host.ipc_state.state == STATE_SEGMENT_READ:
+
+            if len(self.host.ipc_state.seg0) < self.host.ipc_state.seg0_size:
+                self.host.ipc_state.seg0 += self.payload
+            
+            seg0_left = self.host.ipc_state.seg0_size - len(self.host.ipc_state.seg0)
+            
+            if seg0_left <= 0:
+                print("Seg0:", hex(self.host.ipc_state.seg0_size))
+
+                try:
+                    # TODO: store this
+                    payload = RuntimeIPC_capnp.PayloadRuntimeIPC.from_segments([self.host.ipc_state.seg0])
+                    self.printable = payload
+
+                    self.host.ipc_state.seg1_size = payload.nextSize
+                    self.host.ipc_state.type_idx = payload.id
+                except Exception as e:
+                    print ("Exception in RuntimeIPCPkt:", e)
+
+                self.host.ipc_state.state = STATE_EXT_READ
+
+        elif self.host.ipc_state.state == STATE_EXT_READ:
+            if len(self.host.ipc_state.seg1) < self.host.ipc_state.seg1_size:
+                self.host.ipc_state.seg1 += self.payload
+            
+            seg0_left = self.host.ipc_state.seg1_size - len(self.host.ipc_state.seg1)
+            
+            if seg0_left <= 0:
+                print("Ext:")
+                hex_dump(self.host.ipc_state.seg1)
+
+                try:
+                    parser = CapnpParser(self.host.ipc_state.seg1)
+                    parser.parse_entry(0)
+                except Exception as e:
+                    print (e)
+                
+                self.host.ipc_state.state = STATE_SEGMENT_META
+
+    def dump(self):
+        print ("RuntimeIPCPkt:")
+
+        try:
+            print (self.printable)
+        except Exception as e:
+            print ("Exception in RuntimeIPCPkt dump:", e)
+
 class LoggingPkt:
 
     def __init__(self, host, b):
@@ -417,7 +523,7 @@ class LoggingPkt:
                     # TODO: store this
                     self.printable = Logging_capnp.PayloadLogging.from_segments([self.host.logging_state.seg0])
                 except Exception as e:
-                    print (e)
+                    print ("Exception in LoggingPkt:", e)
                 self.host.logging_state.state = STATE_SEGMENT_META
 
 
@@ -438,7 +544,7 @@ class LoggingPkt:
         try:
             print (self.printable)
         except Exception as e:
-            print (e)
+            print ("Exception in LoggingPkt dump:", e)
 
 class PosePkt:
 
@@ -470,9 +576,18 @@ class PosePkt:
             if seg0_left <= 0:
                 try:
                     # TODO: store this
-                    self.printable = Pose_capnp.PayloadPose.from_segments([self.host.pose_state.seg0])
+                    pose_payload = Pose_capnp.PayloadPose.from_segments([self.host.pose_state.seg0])
+                    self.printable = pose_payload
+
+                    if len(pose_payload.controllers) >= 1:
+                        self.host.touchpad_pos = ((pose_payload.controllers[0].touchpadX * (1280/2)) + (1280/2), (pose_payload.controllers[0].touchpadY * (-1024/2)) + (1024/2))
+                        self.host.touchpad_z = pose_payload.controllers[0].touchpadPressure
+                        #self.host.update()
+
+                    #print (self.host.touchpad_pos, self.host.touchpad_z)
                 except Exception as e:
-                    print (e)
+                    print ("Exception in PosePkt:", e)
+                    hex_dump(self.host.pose_state.seg0)
                 self.host.pose_state.state = STATE_SEGMENT_META
 
 
@@ -494,7 +609,7 @@ class PosePkt:
             print (self.printable)
             pass
         except Exception as e:
-            print (e)
+            print ("Exception in PosePkt dump:", e)
 
 class AudioPkt:
 
@@ -528,7 +643,7 @@ class AudioPkt:
                     self.printable = Audio_capnp.PayloadAudio.from_segments([self.host.audio_state.seg0])
                     #self.printable = "asdf"
                 except Exception as e:
-                    print (e)
+                    print ("Exception in AudioPkt:", e)
                 self.host.audio_state.state = STATE_SEGMENT_META
 
 
@@ -550,7 +665,7 @@ class AudioPkt:
             #print (self.printable)
             pass
         except Exception as e:
-            print (e)
+            print ("Exception in AudioPkt dump:", e)
 
 class HandPose:
 
@@ -745,7 +860,7 @@ class SlicePkt:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
         except Exception as e:
-            print (e)
+            print ("Exception in SlicePkt dump:", e)
 
 class CameraStreamPkt:
 
@@ -788,8 +903,24 @@ class CameraStreamPkt:
 
         if self.host.camera_state.seq_collecting and seg0_left <= 0 and seg1_left <= 0 and seg2_left <= 0:
             
+            '''
+            dat = self.host.camera_state.seq_seg0
+            with open("camera_" + str(self.host.camera_state.which) + "_seq_" + str(self.seq) + "_seg0.bin", "wb") as f:
+                f.write(dat)
+                f.close()
+            dat = self.host.camera_state.seq_seg1
+            with open("camera_" + str(self.host.camera_state.which) + "_seq_" + str(self.seq) + "_seg1.bin", "wb") as f:
+                f.write(dat)
+                f.close()
+            dat = self.host.camera_state.seq_seg2
+            with open("camera_" + str(self.host.camera_state.which) + "_seq_" + str(self.seq) + "_seg2.bin", "wb") as f:
+                f.write(dat)
+                f.close()
+            '''
+
             segs = [self.host.camera_state.seq_seg0, self.host.camera_state.seq_seg1, self.host.camera_state.seq_seg2]
             #hex_dump(self.host.camera_state.seq_seg0)
+            #print("Done with", self.host.camera_state.which, hex(self.host.camera_state.seq_seg0_size))
             if self.host.camera_state.which == 1 and self.host.camera_state.seq_seg0_size == 5*8:
                 payload = CameraStream_capnp.PayloadCameraStreamMeta.from_segments(segs)
                 jsondat = bytes(payload.metadata.data).decode("utf-8")
@@ -797,7 +928,8 @@ class CameraStreamPkt:
                     f.write(jsondat)
                     f.close()
                 self.host.camera_state.has_meta = True
-            elif self.host.camera_state.which == 1 and self.host.camera_state.has_meta or self.host.camera_state.which == 2:
+                print("Decoded camera metadata!")
+            elif (self.host.camera_state.which == 1 and self.host.camera_state.has_meta) or self.host.camera_state.which == 2:
                 payload = CameraStream_capnp.PayloadCameraStream.from_segments(segs)
 
                 idx = 0
@@ -813,6 +945,13 @@ class CameraStreamPkt:
                     #    f.write(dat)
                     #    f.close()
                     idx += 1
+
+                '''
+                payload = payload.to_dict()
+                for i in range(0, len(payload['unk1']['struct1Unk4'])):
+                    payload['unk1']['struct1Unk4'][i]['data'] = b''
+                print (payload)
+                '''
 
             self.host.camera_state.seq_collecting = False
             self.host.camera_state.seq_seg0 = b''
@@ -844,5 +983,5 @@ class CameraStreamPkt:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
         except Exception as e:
-            print (e)
+            print ("Exception in CameraStreamPkt dump:", e)
         
