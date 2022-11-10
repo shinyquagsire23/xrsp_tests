@@ -12,6 +12,7 @@ import CameraStream_capnp
 import Pose_capnp
 import Audio_capnp
 import RuntimeIPC_capnp
+import Slice_capnp
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -26,12 +27,11 @@ class TopicPkt:
             hex_dump(b)
             return
 
-        topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
-
+        self.recv_ns = host.ts_ns()
         self.host = host
 
-        self.topic_raw = topic_raw
-        self.sequence = sequence
+        topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
+
         self.unk_0_2 = (topic_raw) & 0x7
         self.bHasAlignPadding = (topic_raw & 8) == 8
         self.bPacketVersionIsInternal = (topic_raw & 0x10) == 0x10
@@ -39,10 +39,10 @@ class TopicPkt:
         self.topic_idx = (topic_raw >> 8) & 0x3F
         self.unk_14_15 = (topic_raw >> 14) & 0x3
         self.num_words = num_words
+        self.sequence = sequence
+
         self.real_size = ((self.num_words - 1) * 4)
         self.full_size = ((self.num_words - 1) * 4)
-
-        self.do_handoff = False
 
         self.payload = b[8:]
 
@@ -56,10 +56,13 @@ class TopicPkt:
         self.specificObj = None
 
     def rebuild_specific(self):
+        if self.specificObj is not None:
+            return
+
         self.specificObj = None
 
         if self.topic_idx == TOPIC_HOSTINFO_ADV:
-            self.specificObj = HostInfoPkt(self.host, self.payload)
+            self.specificObj = HostInfoPkt(self.host, self.recv_ns, self.payload)
         elif self.topic_idx == TOPIC_POSE:
             self.specificObj = PosePkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_AUDIO:
@@ -71,7 +74,7 @@ class TopicPkt:
         elif self.topic_idx == TOPIC_CAMERA_STREAM:
             self.specificObj = CameraStreamPkt(self.host, self.payload, self.sequence)
         elif self.topic_idx >= TOPIC_SLICE_0 and self.topic_idx <= TOPIC_SLICE_15:
-            self.specificObj = SlicePkt(self.host, self.payload)
+            self.specificObj = SlicePkt(self.host, self.topic_idx - TOPIC_SLICE_0, self.payload)
         elif self.topic_idx == TOPIC_RUNTIME_IPC:
             self.specificObj = RuntimeIPCPkt(self.host, self.payload)
         elif self.topic_idx == TOPIC_LOGGING:
@@ -79,28 +82,12 @@ class TopicPkt:
 
     def missing_bytes(self):
         amt = self.real_size - len(self.payload)
-        '''
-        if self.num_words == 0xFFFF and amt == 0:
-            self.do_handoff = True
-            return 0x200
-        '''
+
         if amt >= 0:
             return amt
         return 0
 
     def add_missing_bytes(self, b):
-        if self.do_handoff:
-            topic_raw, num_words, sequence = struct.unpack("<HHH", b[:6])
-            self.num_words += num_words - 1
-            self.real_size = ((self.num_words - 1) * 4)
-
-            # padding subtract
-            if (topic_raw & 8) == 8:
-                self.real_size -= self.payload[self.real_size-1]
-
-            b = b[8:]
-            self.do_handoff = False
-
         self.payload += b
         before = len(self.payload)
         self.payload = self.payload[:self.real_size]
@@ -151,11 +138,13 @@ class TopicPkt:
 
 class HostInfoPkt:
 
-    def __init__(self, host, b):
+    def __init__(self, host, recv_ns, b):
         if len(b) < 16:
             print ("Bad hostinfo pkt!")
             hex_dump(b)
             return
+
+        self.recv_ns = recv_ns
 
         header_0, unk_4 = struct.unpack("<LL", b[:0x8])
 
@@ -185,17 +174,25 @@ class HostInfoPkt:
             self.payload = b[0x10:]
 
     def craft_echo(host, result, echo_id, org, recv, xmt, offset):
+        org = org & 0xFFFFFFFFFFFFFFFF
+        recv = recv & 0xFFFFFFFFFFFFFFFF
+        xmt = xmt & 0xFFFFFFFFFFFFFFFF
+        offset = offset & 0xFFFFFFFFFFFFFFFF
+
         return HostInfoPkt.craft(host, BUILTIN_ECHO, result, 0x28, 0, echo_id, struct.pack("<QQQQ", org, recv, xmt, offset))
 
-    def craft_basic(host, message_type, result, stream_size, unk_4, payload):
-        return HostInfoPkt.craft(host, message_type, result, stream_size, 0, unk_4, payload)
+    def craft_basic(host, message_type, result, unk_4, payload):
+        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x8, 0, unk_4, payload)
+
+    def craft_capnp(host, message_type, result, unk_4, payload):
+        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x10, 0, unk_4, struct.pack("<LL", 0, len(payload) // 8) + payload)
 
     def craft(host, message_type, result, stream_size, unk_30_31, unk_4, payload):
 
         header_0 = (message_type & 0xF) | ((result & 0x1FF) << 4) | ((stream_size & 0xFFFFC) << 12) | ((unk_30_31 & 3) << 30)
         b = struct.pack("<LL", header_0, unk_4) + payload
 
-        return HostInfoPkt(host, b)
+        return HostInfoPkt(host, 0, b)
 
     def to_bytes(self):
         self.header_0 = (self.message_type & 0xF) | ((self.result & 0x1FF) << 4) | ((self.stream_size & 0xFFFFC) << 12) | ((self.unk_30_31 & 3) << 30)
@@ -204,7 +201,7 @@ class HostInfoPkt:
             b += struct.pack("<QQQQ", self.echo_org, self.echo_recv, self.echo_xmt, self.echo_offset)
         else:
             b += struct.pack("<LL", self.unk_8, self.len_u64s)
-        b += self.payload
+            b += self.payload
         return b
 
     def dump(self):
@@ -229,6 +226,9 @@ class HostInfoPkt:
             print ("  unk_4:    %08x" % self.unk_4)
             print ("  unk_8:    %08x" % self.unk_8)
             print ("  len_u64s: %08x" % self.len_u64s)
+
+        if self.message_type == BUILTIN_ECHO:
+            return
 
         try:
             hex_dump(self.payload)
@@ -653,6 +653,7 @@ class SkeletonPkt:
         #unk_00, unk_04 = struct.unpack("<LL", self.payload[:8])
         #hex_dump(self.payload)
 
+'''
 class SlicePkt:
 
     def __init__(self, host, b):
@@ -673,6 +674,105 @@ class SlicePkt:
         try:
             parser = CapnpParser(self.payload)
             parser.parse_entry(0)
+        except Exception as e:
+            print ("Exception in SlicePkt dump:", e)
+'''
+
+class SlicePkt:
+
+    def __init__(self, host, slice_idx, b):
+        if len(b) < 8:
+            print ("Bad slice pkt!")
+            hex_dump(b)
+            return
+
+        self.host = host
+        self.payload = b[0x0:]
+
+        self.printable = ""
+
+        if self.host.slice_state[slice_idx].state == STATE_SEGMENT_META:
+            print ("meta")
+            #hex_dump(self.payload)
+            self.host.slice_state[slice_idx].reset()
+            self.host.slice_state[slice_idx].type_idx, self.host.slice_state[slice_idx].seg0_size = struct.unpack("<LL", self.payload[:8])
+
+            self.host.slice_state[slice_idx].seg0_size *= 8
+
+            self.host.slice_state[slice_idx].state = STATE_SEGMENT_READ
+        elif self.host.slice_state[slice_idx].state == STATE_SEGMENT_READ:
+            print ("seg read", hex(self.host.slice_state[slice_idx].seg0_size))
+            #hex_dump(self.payload)
+
+            if len(self.host.slice_state[slice_idx].seg0) < self.host.slice_state[slice_idx].seg0_size:
+                self.host.slice_state[slice_idx].seg0 += self.payload
+            
+            seg0_left = self.host.slice_state[slice_idx].seg0_size - len(self.host.slice_state[slice_idx].seg0)
+            
+            if seg0_left <= 0:
+                print("Seg0:", hex(self.host.slice_state[slice_idx].seg0_size))
+
+                try:
+                    # TODO: store this
+                    payload = Slice_capnp.PayloadSlice.from_segments([self.host.slice_state[slice_idx].seg0])
+                    self.printable = payload
+
+                    self.host.slice_state[slice_idx].seg0 = b''
+                    self.host.slice_state[slice_idx].seg1 = b''
+
+                    self.host.slice_state[slice_idx].seg0_size = payload.csdSize
+                    self.host.slice_state[slice_idx].seg1_size = payload.videoSize
+                except Exception as e:
+                    print ("Exception in SlicePkt:", e)
+
+                self.host.slice_state[slice_idx].state = STATE_EXT_READ
+
+        elif self.host.slice_state[slice_idx].state == STATE_EXT_READ:
+            print ("ext read", hex(len(self.host.slice_state[slice_idx].seg0)), hex(len(self.host.slice_state[slice_idx].seg1)))
+
+            if len(self.host.slice_state[slice_idx].seg0) < self.host.slice_state[slice_idx].seg0_size:
+                self.host.slice_state[slice_idx].seg0 += self.payload
+            elif len(self.host.slice_state[slice_idx].seg1) < self.host.slice_state[slice_idx].seg1_size:
+                self.host.slice_state[slice_idx].seg1 += self.payload
+            
+            seg0_left = self.host.slice_state[slice_idx].seg0_size - len(self.host.slice_state[slice_idx].seg0)
+            seg1_left = self.host.slice_state[slice_idx].seg1_size - len(self.host.slice_state[slice_idx].seg1)
+            
+            if seg0_left <= 0 and seg1_left <= 0:
+                print("Ext 0:", hex(len(self.host.slice_state[slice_idx].seg0)))
+
+                '''
+                f = open("video_extract/video_%d_%d.bin" % (self.host.video_inc, 0), "wb")
+                f.write(self.host.slice_state[slice_idx].seg0)
+                f.close()
+                '''
+
+                #hex_dump()
+                print("Ext 1:", hex(len(self.host.slice_state[slice_idx].seg1)))
+                #hex_dump(self.host.slice_state[slice_idx].seg1)
+                '''
+                f = open("video_extract/video_%d_%d.bin" % (self.host.video_inc, 1), "wb")
+                f.write(self.host.slice_state[slice_idx].seg1)
+                f.close()
+                '''
+
+                self.host.video_inc += 1
+
+                '''
+                try:
+                    parser = CapnpParser(self.host.slice_state[slice_idx].seg1)
+                    parser.parse_entry(0)
+                except Exception as e:
+                    print (e)
+                '''
+
+                self.host.slice_state[slice_idx].state = STATE_SEGMENT_META
+
+    def dump(self):
+        print ("SlicePkt:")
+
+        try:
+            print (self.printable)
         except Exception as e:
             print ("Exception in SlicePkt dump:", e)
 

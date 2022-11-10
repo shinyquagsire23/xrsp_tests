@@ -12,6 +12,7 @@ from utils import hex_dump
 xrsp_host = XrspHost()
 xrsp_host.init_usb()
 
+'''
 reply = b''
 try:
     b = xrsp_host.ep_in.read(0x200)
@@ -30,101 +31,8 @@ except usb.core.USBTimeoutError as e:
     print ("Failed first read", e)
 except usb.core.USBError as e:
     print ("Failed first read", e)
-
-response_ok_payload = bytes([0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x2B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-response_ok = HostInfoPkt.craft_basic(xrsp_host, BUILTIN_OK, 0xC8, 0x58, 1, struct.pack("<LL", 0, 9) + response_ok_payload).to_bytes()
-request_codegen_payload = bytes([0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-request_codegen = HostInfoPkt.craft_basic(xrsp_host, BUILTIN_CODE_GENERATION, 0xC8, 0x28, 1, struct.pack("<LL", 0, 3) + request_codegen_payload).to_bytes()
-request_pairing = [0x87, 0x0C, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]
-
-#request_echo = [0x06, 0x80, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x58, 0x2B, 0xDD, 0x3F, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-request_echo_ping = HostInfoPkt.craft_echo(xrsp_host, ECHO_PING, 1, 0, 0, 0x000000733fdd2b58, 0).to_bytes()
-
-request_video_idk = [0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]
-
-response_ok_2 = [0x82, 0xAC, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x03, 0x00, 0x01, 0x00, 0x1F, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x1B, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x55, 0x53, 0x42, 0x33, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00]
-request_codegen_2 = [0x89, 0xAC, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-request_pairing_2 = [0x87, 0x0C, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-
-send_audiocontrol_idk = struct.pack("<LLHHLLL", 0, 2, 1, 1, 0, 0, 0)
-response_echo_pong = HostInfoPkt.craft_echo(xrsp_host, ECHO_PONG, 1, 0x000011148017ea57, 0x00000074c12277bc, 0x00000074c122daf4, 0).to_bytes()
-send_cmd_chemx_toggle = [0x4F, 0x9D, 0x1B, 0xE9, 0x94, 0xEC, 0x05, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-send_cmd_asw_toggle = [0x83, 0x9D, 0x1B, 0xE9, 0x94, 0xEC, 0x05, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-send_cmd_dropframestate_toggle = [0x83, 0x9D, 0x1B, 0xE9, 0x94, 0xEC, 0x05, 0x00, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-send_cmd_camerastream = [0x4F, 0x9D, 0x1B, 0xE9, 0x94, 0xEC, 0x05, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-#send_cmd_hands = [0x4F, 0x9D, 0x1B, 0xE9, 0x94, 0xEC, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-send_cmd_body = struct.pack("<LLHHLLL", 0, 2, 2, 1, 0, 0, 0)
-send_cmd_hands = struct.pack("<LLHHLLL", 0, 2, 1, 1, 0, 0, 0)
-
-print ("OK send")
-xrsp_host.send_to_topic(1, response_ok)
-
-print ("OK read")
-xrsp_host.old_read_xrsp()
-
-print ("Codegen send")
-xrsp_host.send_to_topic(1, request_codegen)
-
-print ("Codegen read")
-xrsp_host.old_read_xrsp()
-
-print ("Pairing send")
-xrsp_host.send_to_topic(1, request_pairing)
-
-print ("Pairing read")
-xrsp_host.old_read_xrsp()
-
-print ("Echo send")
-xrsp_host.send_to_topic(1, request_echo_ping)
-
-print ("Video idk cmd send")
-xrsp_host.send_to_topic_capnp_wrapped(TOPIC_VIDEO, 0, request_video_idk)
-
-print ("Waiting for user to accept...")
-
-while True:
-    print ("5 read")
-    ret = xrsp_host.old_read_xrsp()
-    if len(ret) > 0:
-        break
-
-print ("Done?")
-
-print ("OK send #2")
-xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, response_ok_2)
-
-print ("OK read #2")
-xrsp_host.old_read_xrsp()
-
-print ("Codegen send #2")
-xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_codegen_2)
-
-print ("Codegen read #2")
-xrsp_host.old_read_xrsp()
-
-print ("Pairing send #2")
-xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_pairing_2)
-
-print ("Pairing read #2")
-xrsp_host.old_read_xrsp()
-
-print ("Echo send")
-xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, request_echo_ping)
-
-print ("Audio Control cmd send")
-xrsp_host.send_to_topic_capnp_wrapped(TOPIC_AUDIO_CONTROL, 0, send_audiocontrol_idk)
-
-print ("1A read")
-xrsp_host.old_read_xrsp()
-
-print ("1 send")
-xrsp_host.send_to_topic(TOPIC_HOSTINFO_ADV, response_echo_pong)
-
-print ("2 sends")
-#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_chemx_toggle)
-#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_asw_toggle)
-#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_dropframestate_toggle)
-#xrsp_host.send_to_topic(TOPIC_COMMAND, send_cmd_camerastream)
+'''
+xrsp_host.wait_pairing()
 
 '''
 h264_1 = open("h264_1.bin", "rb").read()
@@ -175,14 +83,21 @@ for i in range(0, 18):
     xrsp_host.read_xrsp()
 '''
 
-# Replay H.264 data
-
-for i in range(0, 10):
+start_ns = xrsp_host.ts_ns()
+while True:
+    if xrsp_host.ts_ns() - start_ns > 5000000000: # 5s
+        break
     xrsp_host.read_xrsp()
-    #xrsp_host.send_to_topic(1, request_echo)
 
+#ffmpeg -f rawvideo -pix_fmt yuv420p -s:v 1920x1080 -r 25 -i input.yuv -c:v libx264 -f rawvideo output.264
+#ffmpeg -f image2 -r 60 -i ~/Pictures/toblerone.jpg -c:v libx264 -f rawvideo -crf 18  -pix_fmt yuv420p test_toblerone.264
+'''
+# Replay H.264 data
+print ("Begin streaming")
 while True:
     for i in range(0, 1220): #1220 7550
+        xrsp_host.read_xrsp()
+
         f = open("video_baked/video_baked_" + str(i) + ".bin", "rb")
         dat = f.read()
         f.close()
@@ -191,9 +106,73 @@ while True:
             xrsp_host.ep_out.write(dat)
         except usb.core.USBTimeoutError as e:
             print ("Failed to send baked video", e)
-        print (str(i))
-        xrsp_host.read_xrsp()
+        #print (str(i))
         #xrsp_host.send_to_topic(1, request_echo)
+'''
+
+#ffmpeg -f image2 -r 72 -i ~/Pictures/toblerone_crop.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 test_toblerone.264
+#ffmpeg -f image2 -r 72 -i ~/Pictures/toblerone_crop.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone.264
+#ffmpeg -f image2 -r 72 -i ~/Pictures/toblerone.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone.264
+
+#ffmpeg -f image2 -r 72 -i test_frame/toblerone_1.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone_1.264
+#ffmpeg -f image2 -r 72 -i test_frame/toblerone_2.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone_2.264
+#ffmpeg -f image2 -r 72 -i test_frame/toblerone_3.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone_3.264
+#ffmpeg -f image2 -r 72 -i test_frame/toblerone_4.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone_4.264
+#ffmpeg -f image2 -r 72 -i test_frame/toblerone_5.jpg -c:v libx264 -f rawvideo -pix_fmt yuvj420p -b:v 70000k -x264opts keyint=1 -profile:v baseline test_toblerone_5.264
+
+# Replay H.264 data
+print ("Begin streaming")
+frameIdx = 0
+while True:
+    
+    '''
+    for i in range(0, 5): #2070 7550
+        xrsp_host.read_xrsp()
+
+        f = open("video_extract/video_" + str(i) + "_0.bin", "rb")
+        dat0 = f.read()
+        f.close()
+
+        f = open("video_extract/video_" + str(i) + "_1.bin", "rb")
+        dat1 = f.read()
+        f.close()
+
+        if (i % xrsp_host.num_slices) == 0:
+            frameIdx += 1
+
+        #xrsp_host.read_xrsp()
+        try:
+            xrsp_host.send_video(i % xrsp_host.num_slices, frameIdx, dat0, dat1, (i % 5)*(1920 // xrsp_host.num_slices))
+        except usb.core.USBTimeoutError as e:
+            print ("Failed to send baked video", e)
+        print (str(i))
+        #xrsp_host.send_to_topic(1, request_echo)
+    '''
+    
+
+    xrsp_host.read_xrsp()
+
+    for i in range(0, xrsp_host.num_slices):
+        #f = open("test_toblerone.264.0", "rb")
+        f = open("test_frame/test_toblerone_" + str(i+1) + ".264", "rb")
+        dat0 = f.read()[:0x27]
+        f.close()
+        #dat0 = b''
+
+        #f = open("test_toblerone.264.1", "rb")
+        f = open("test_frame/test_toblerone_" + str(i+1) + ".264", "rb")
+        dat1 = f.read()[0x29A:]
+        f.close()
+
+        #xrsp_host.read_xrsp()
+        try:
+            xrsp_host.send_video(i, frameIdx, dat0, dat1, (i % 5)*(1920 // xrsp_host.num_slices))
+        except usb.core.USBTimeoutError as e:
+            print ("Failed to send baked video", e)
+
+    frameIdx += 1
+    print (str(frameIdx))
+    #xrsp_host.send_to_topic(1, request_echo)
 
 
 #xrsp_host.send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_hands)

@@ -3,6 +3,8 @@ import struct
 
 from capnp_parse import CapnpParser
 from xrsp_parse import *
+from xrsp_constants import *
+from xrsp_host import *
 
 from utils import hex_dump
 
