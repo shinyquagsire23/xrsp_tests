@@ -7,12 +7,12 @@ import numpy as np
 import json
 
 import capnp
-import Logging_capnp
-import CameraStream_capnp
-import Pose_capnp
-import Audio_capnp
-import RuntimeIPC_capnp
-import Slice_capnp
+from protos.Logging_capnp import PayloadLogging
+from protos.CameraStream_capnp import PayloadCameraStream
+from protos.Pose_capnp import PayloadPose
+from protos.Audio_capnp import PayloadAudio
+from protos.RuntimeIPC_capnp import PayloadRuntimeIPC
+from protos.Slice_capnp import PayloadSlice
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -269,7 +269,7 @@ class RuntimeIPCPkt:
 
                 try:
                     # TODO: store this
-                    payload = RuntimeIPC_capnp.PayloadRuntimeIPC.from_segments([self.host.ipc_state.seg0])
+                    payload = PayloadRuntimeIPC.from_segments([self.host.ipc_state.seg0])
                     self.printable = payload
 
                     self.host.ipc_state.seg1_size = payload.nextSize
@@ -335,7 +335,7 @@ class LoggingPkt:
             if seg0_left <= 0:
                 try:
                     # TODO: store this
-                    self.printable = Logging_capnp.PayloadLogging.from_segments([self.host.logging_state.seg0])
+                    self.printable = PayloadLogging.from_segments([self.host.logging_state.seg0])
                 except Exception as e:
                     print ("Exception in LoggingPkt:", e)
                 self.host.logging_state.state = STATE_SEGMENT_META
@@ -390,7 +390,7 @@ class PosePkt:
             if seg0_left <= 0:
                 try:
                     # TODO: store this
-                    pose_payload = Pose_capnp.PayloadPose.from_segments([self.host.pose_state.seg0])
+                    pose_payload = PayloadPose.from_segments([self.host.pose_state.seg0])
                     self.printable = pose_payload
 
                     if len(pose_payload.controllers) >= 1:
@@ -454,7 +454,7 @@ class AudioPkt:
             if seg0_left <= 0:
                 try:
                     # TODO: store this
-                    self.printable = Audio_capnp.PayloadAudio.from_segments([self.host.audio_state.seg0])
+                    self.printable = PayloadAudio.from_segments([self.host.audio_state.seg0])
                     #self.printable = "asdf"
                 except Exception as e:
                     print ("Exception in AudioPkt:", e)
@@ -714,7 +714,7 @@ class SlicePkt:
 
                 try:
                     # TODO: store this
-                    payload = Slice_capnp.PayloadSlice.from_segments([self.host.slice_state[slice_idx].seg0])
+                    payload = PayloadSlice.from_segments([self.host.slice_state[slice_idx].seg0])
                     self.printable = payload
 
                     self.host.slice_state[slice_idx].seg0 = b''
@@ -836,7 +836,7 @@ class CameraStreamPkt:
             #hex_dump(self.host.camera_state.seq_seg0)
             #print("Done with", self.host.camera_state.which, hex(self.host.camera_state.seq_seg0_size))
             if self.host.camera_state.which == 1 and self.host.camera_state.seq_seg0_size == 5*8:
-                payload = CameraStream_capnp.PayloadCameraStreamMeta.from_segments(segs)
+                payload = PayloadCameraStreamMeta.from_segments(segs)
                 jsondat = bytes(payload.metadata.data).decode("utf-8")
                 with open("camera_metadata.json", "w") as f:
                     f.write(jsondat)
@@ -844,7 +844,7 @@ class CameraStreamPkt:
                 self.host.camera_state.has_meta = True
                 print("Decoded camera metadata!")
             elif (self.host.camera_state.which == 1 and self.host.camera_state.has_meta) or self.host.camera_state.which == 2:
-                payload = CameraStream_capnp.PayloadCameraStream.from_segments(segs)
+                payload = PayloadCameraStream.from_segments(segs)
 
                 idx = 0
                 for d in payload.unk1.struct1Unk4:
@@ -889,7 +889,7 @@ class CameraStreamPkt:
         if len(self.payload) > 0x200:
             return
 
-        #test = CameraStream_capnp.PayloadCameraStream.new_message()
+        #test = PayloadCameraStream.new_message()
 
 
         

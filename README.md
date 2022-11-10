@@ -3,7 +3,29 @@ Attempting to talk to Meta Quest's USB/XRSP interface
 
 See also: https://github.com/OpenOculus/XrspDocs
 
-# XrspPacketHeader
+## Repo Organization
+
+**Mains:**
+ - `xrsp.py`: Main script, talks USB and displays an image.
+ - `pkt_parse.py`: Replay packets dumped from `xrsp.py`.
+ - `capnp_parse.py`: Display raw capnproto data.
+ - `264_extract_wireshark.py`: Wireshark pcap parsing and misc dumping.
+ - `float_to_bin.py`: Look at the weird float camera images.
+
+**Helpers**:
+ - `xrsp_constants.py`: Constants related to the XRSP protocol.
+ - `xrsp_host.py`: XrspHost, the USB device and state. Manages initialization, packet sending, and responses.
+ - `xrsp_parse.py`: Objects/parsing for all topics.
+ - `utils.py`: Helper functions.
+
+**Data:**
+ - `video_extract/`: Displayed H.264 frame.
+ - `notes.txt`: Misc docs.
+ - `camera_metadata_questpro.json`: JSON sent by CameraStream topic for Quest Pro.
+ - `camera_metadata_quest2.json`: JSON sent by CameraStream topic for Quest 2.
+
+# Data Structures
+## XrspPacketHeader
 | Position | Size | Name                         |
 |----------|------|------------------------------|
 | 0x00     | u16  | Version, Topic (See below)   |
@@ -11,7 +33,7 @@ See also: https://github.com/OpenOculus/XrspDocs
 | 0x04     | u16  | Sequence number              |
 | 0x06     | u16  | Padding                      |
 
-# Version/Topic u16
+## Version/Topic u16
 |  Bits | Size | Name                         |
 |-------|------|------------------------------|
 | 0-2   | 3    | Version?                     |
@@ -21,7 +43,7 @@ See also: https://github.com/OpenOculus/XrspDocs
 | 8-13  | 6    | Topic                        |
 | 14-15 | 2    | Unk                          |
 
-# XrspBuiltinHeader
+## XrspBuiltinHeader
 
 Header for hostinfo-adv
 
@@ -33,7 +55,7 @@ Header for hostinfo-adv
 | 0x0C     | u32  | Payload length (in u64 words) |
 | 0x10     | ...  | Payload                       |
 
-# Header_0
+## Header_0
 |  Bits | Size | Name                                    |
 |-------|------|-----------------------------------------|
 | 0-3   | 4    | XrspBuiltinMessageType                  |
@@ -41,10 +63,10 @@ Header for hostinfo-adv
 | 14-29 | 16   | Stream size in words, including header  |
 | 30-31 | 2    | Unk                                     |
 
-# HostInfo Packet
+## HostInfo Packet
 The initial hostinfo sent is a capnp message containing the device's info, including the serial, name/device type, lens intrinsics, etc.
 
-# Topics
+## Topics
 Topics are are 6-bits in length (mask 0x3f). Topics over ID 2 are always encrypted; it is currently unknown as to how they are encrypted. Each topic is routed to and parsed in a separate handler, usually in its own thread.
 
 | ID   | Name               |
@@ -84,7 +106,7 @@ Topics are are 6-bits in length (mask 0x3f). Topics over ID 2 are always encrypt
 | 0x20 | "CameraStream"     |
 | 0x21 | "Logging"          |
 
-## Command pkts ids
+### Command pkts ids
 
 Search for `Command result err %d`
 
@@ -109,9 +131,17 @@ Search for `Command result err %d`
 | 0x10 | ?                                      |
 | 0x11 | Drop frames state command              |
 
-## getInputControl (where??)
+### getInputControl
 | Num  | Function                  |
 |------|---------------------------|
 | 0x00 | ?                         |
 | 0x01 | Toggle hands              |
 | 0x02 | Toggle 3-pt body tracking |
+
+## Packet Patterns
+All packets are wrapped with XrspPacketHeader and Topics, but not all Topics function the same.
+
+ - Some, like hostinfo-adv, wrap capnproto payloads directly in one packet.
+ - Some, like AudioControl, Video, and CameraStream have a simple two-state state machine: A raw packet is sent with a u32 type, u32 segment0 length (CameraStream/others have two more u32s for segments 1 and 2). XrspPacketHeader-wrapped packets are then sent until each segment buffer is filled. Once filled, the segment is decoded. This is followed both sending and receiving.
+ - Some, like Slice N, have a 3+ stage state machine: A raw packet (u32 type, u32 segment len), a capnproto packet which describes the H.264 CSD NAL size and H.264 IDR NAL size, an optional CSD packet, and an optional IDR packet.
+ - Some topics send raw struct data, no capnproto at all (Hands, ...)

@@ -13,6 +13,7 @@ import time
 
 from xrsp_parse import *
 from xrsp_constants import *
+from protos.Slice_capnp import PayloadSlice
 
 PAIRINGSTATE_WAIT_FIRST = 0
 PAIRINGSTATE_WAIT_SECOND = 1
@@ -274,6 +275,10 @@ class XrspHost:
         #self.send_to_topic(TOPIC_COMMAND, send_cmd_dropframestate_toggle)
         #self.send_to_topic(TOPIC_COMMAND, send_cmd_camerastream)
 
+        #self.send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_hands)
+        #self.send_to_topic_capnp_wrapped(TOPIC_INPUT_CONTROL, 0, send_cmd_body)
+
+
     def send_ping(self):
         #print ("Sending ping...")
         if self.ts_ns() - self.echo_req_sent_ns < 16000000: #16ms
@@ -288,7 +293,7 @@ class XrspHost:
         self.echo_idx += 1
 
     def send_video(self, sliceIdx, frameIdx, csdDat, videoDat, blitYPos):
-        msg = Slice_capnp.PayloadSlice.new_message()
+        msg = PayloadSlice.new_message()
 
         bits = 0
         if len(csdDat) > 0:
