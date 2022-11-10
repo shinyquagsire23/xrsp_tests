@@ -44,9 +44,9 @@ struct PoseTrackedController {
     touchpadX @7 :Float32;
     touchpadY @8 :Float32;
     touchpadPressure @9 :Float32;
-    unk5p0 @10 :Float32;
+    stylusPressure @10 :Float32;
     triggerCovered @11 :Float32;
-    cameraCovered @12 :Float32; # ??
+    triggerFingerCurl @12 :Float32;
     unk6p1 @13 :Float32;
     struct0 @14 :OvrPoseF;
     struct1 @15 :PoseStruct1;
