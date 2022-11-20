@@ -13,6 +13,7 @@ from protos.Pose_capnp import PayloadPose
 from protos.Audio_capnp import PayloadAudio
 from protos.RuntimeIPC_capnp import PayloadRuntimeIPC
 from protos.Slice_capnp import PayloadSlice
+from protos.HostInfo_capnp import PayloadHostInfo
 
 from capnp_parse import CapnpParser
 from utils import hex_dump
@@ -154,9 +155,8 @@ class HostInfoPkt:
 
         # decode header_0
         self.message_type = header_0 & 0xF
-        self.result = (header_0 >> 4) & 0x1FF
+        self.result = (header_0 >> 4) & 0x3FF
         self.stream_size = (header_0 >> 12) & 0xFFFFC
-        self.unk_30_31 = (header_0 >> 30)
 
         self.unk_8 = 0
         self.len_u64s = 0
@@ -179,23 +179,23 @@ class HostInfoPkt:
         xmt = xmt & 0xFFFFFFFFFFFFFFFF
         offset = offset & 0xFFFFFFFFFFFFFFFF
 
-        return HostInfoPkt.craft(host, BUILTIN_ECHO, result, 0x28, 0, echo_id, struct.pack("<QQQQ", org, recv, xmt, offset))
+        return HostInfoPkt.craft(host, BUILTIN_ECHO, result, 0x28, echo_id, struct.pack("<QQQQ", org, recv, xmt, offset))
 
     def craft_basic(host, message_type, result, unk_4, payload):
-        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x8, 0, unk_4, payload)
+        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x8, unk_4, payload)
 
     def craft_capnp(host, message_type, result, unk_4, payload):
-        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x10, 0, unk_4, struct.pack("<LL", 0, len(payload) // 8) + payload)
+        return HostInfoPkt.craft(host, message_type, result, len(payload) + 0x10, unk_4, struct.pack("<LL", 0, len(payload) // 8) + payload)
 
-    def craft(host, message_type, result, stream_size, unk_30_31, unk_4, payload):
+    def craft(host, message_type, result, stream_size, unk_4, payload):
 
-        header_0 = (message_type & 0xF) | ((result & 0x1FF) << 4) | ((stream_size & 0xFFFFC) << 12) | ((unk_30_31 & 3) << 30)
+        header_0 = (message_type & 0xF) | ((result & 0x3FF) << 4) | ((stream_size & 0xFFFFC) << 12)
         b = struct.pack("<LL", header_0, unk_4) + payload
 
         return HostInfoPkt(host, 0, b)
 
     def to_bytes(self):
-        self.header_0 = (self.message_type & 0xF) | ((self.result & 0x1FF) << 4) | ((self.stream_size & 0xFFFFC) << 12) | ((self.unk_30_31 & 3) << 30)
+        self.header_0 = (self.message_type & 0xF) | ((self.result & 0x3FF) << 4) | ((self.stream_size & 0xFFFFC) << 12)
         b = struct.pack("<LL", self.header_0, self.unk_4)
         if self.message_type == BUILTIN_ECHO:
             b += struct.pack("<QQQQ", self.echo_org, self.echo_recv, self.echo_xmt, self.echo_offset)
@@ -211,7 +211,6 @@ class HostInfoPkt:
         print ("    message_type:   %s (%01x)" % (XrspBuiltinMessageType(self.message_type), self.message_type))
         print ("    result:         %03x" % self.result)
         print ("    stream_size:    %05x" % self.stream_size)
-        print ("    unk_30_31:      %01x" % self.unk_30_31)
 
         
         if self.message_type == BUILTIN_ECHO:
@@ -228,6 +227,13 @@ class HostInfoPkt:
             print ("  len_u64s: %08x" % self.len_u64s)
 
         if self.message_type == BUILTIN_ECHO:
+            return
+
+        if self.message_type == BUILTIN_INVITE:
+            # TODO: store this
+            payload = PayloadHostInfo.from_segments([self.payload])
+            print (payload)
+
             return
 
         try:

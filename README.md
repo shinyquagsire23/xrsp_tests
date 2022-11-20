@@ -59,9 +59,8 @@ Header for hostinfo-adv
 |  Bits | Size | Name                                    |
 |-------|------|-----------------------------------------|
 | 0-3   | 4    | XrspBuiltinMessageType                  |
-| 4-13  | 14   | XrspResult(?) xrspTransactionStatusCode |
-| 14-29 | 16   | Stream size in words, including header  |
-| 30-31 | 2    | Unk                                     |
+| 4-13  | 10   | XrspResult(?) xrspTransactionStatusCode |
+| 14-31 | 18   | Stream size in words, including header  |
 
 ## HostInfo Packet
 The initial hostinfo sent is a capnp message containing the device's info, including the serial, name/device type, lens intrinsics, etc.

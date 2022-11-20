@@ -339,6 +339,8 @@ class XrspHost:
 
         segments = msg.to_segments()
 
+        hex_dump(segments[0])
+
         self.send_to_topic_capnp_wrapped(TOPIC_SLICE_0+sliceIdx, 0, segments[0])
         self.send_to_topic(TOPIC_SLICE_0+sliceIdx, csdDat)
         self.send_to_topic(TOPIC_SLICE_0+sliceIdx, videoDat)
@@ -387,8 +389,8 @@ class XrspHost:
             self.increment += 1
             self.increment = self.increment & 0xFFFF
 
-            #pkt = TopicPkt(self, pkt_out)
-            #pkt.dump()
+            pkt = TopicPkt(self, pkt_out)
+            pkt.dump()
 
             #print (hex(len(pkt_out)))
 
